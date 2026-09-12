@@ -1,0 +1,42 @@
+# Build
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Node
+node_modules/
+
+# Logs
+*.log
+.vs/
+
+# OSM raw map data
+*.osm
+*.osm.pbf
+*.osm.pbf.tmp
+*.osm.gz
+
+# OSRM generated data
+*.osrm
+*.osrm.*
+
+# Local map datasets
+/maps/
+/data/
+
+# OSM directory: keep directory, ignore generated contents
+/osm/*
+!/osm/.gitkeep
+
+# Environment / secrets
+.env
+.env.*
+appsettings.Development.json
+
+# OSRM temporary files
+*.tmp
+*.tmp.*ep
