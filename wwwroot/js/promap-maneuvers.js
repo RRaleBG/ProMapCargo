@@ -1,117 +1,313 @@
 ﻿"use strict";
 
 window.ProMap = window.ProMap || {};
+
 window.ProMap.Maneuvers = (() => {
+
+    function getNumber(...values) {
+        for (const value of values) {
+            const number =
+                Number(value);
+
+            if (
+                Number.isFinite(
+                    number
+                )
+            ) {
+                return number;
+            }
+        }
+
+        return null;
+    }
 
     function normalize(maneuver) {
         if (!maneuver) {
-
             return {
                 type: "continue",
+                modifier: null,
                 icon: "↑",
-                instruction: "Nastavi pravo",
-                distanceMeters: null
+                instruction:
+                    "Nastavi pravo",
+                distanceMeters: null,
+                durationSeconds: null
             };
         }
 
+        const type =
+            maneuver.type ||
+            maneuver.Type ||
+            "continue";
+
+        const modifier =
+            maneuver.modifier ||
+            maneuver.Modifier ||
+            null;
+
+        const distanceMeters =
+            getNumber(
+                maneuver.distanceMeters,
+                maneuver.DistanceMeters,
+                maneuver.distanceFromPreviousMeters,
+                maneuver.DistanceFromPreviousMeters,
+                maneuver.distance,
+                maneuver.Distance
+            );
+
+        const durationSeconds =
+            getNumber(
+                maneuver.durationSeconds,
+                maneuver.DurationSeconds,
+                maneuver.duration,
+                maneuver.Duration
+            );
+
+        const instruction =
+            maneuver.instruction ||
+            maneuver.Instruction ||
+            buildInstruction(
+                type,
+                modifier
+            );
+
         return {
-            type: maneuver.type ||  "continue",
-            modifier: maneuver.modifier || null,
-            icon: getIcon(
-                    maneuver.type,
-                    maneuver.modifier
+            type,
+            modifier,
+
+            icon:
+                maneuver.icon ||
+                maneuver.Icon ||
+                getIcon(
+                    type,
+                    modifier
                 ),
-            instruction:
-                maneuver.instruction ||
-                buildInstruction(
-                    maneuver.type,
-                    maneuver.modifier
-                ),
-            distanceMeters:
-                Number.isFinite(Number(maneuver.distanceMeters)) ? Number(maneuver.distanceMeters) : null
+
+            instruction,
+
+            distanceMeters,
+
+            durationSeconds
         };
     }
 
     function getIcon(type, modifier) {
-        switch (type) {
+        switch (
+        String(
+            type || ""
+        ).toLowerCase()
+        ) {
             case "turn":
-
-                if (modifier === "left") {
+                if (
+                    modifier ===
+                    "left"
+                ) {
                     return "↰";
                 }
-                if (modifier === "right") {
+
+                if (
+                    modifier ===
+                    "right"
+                ) {
                     return "↱";
                 }
+
                 return "↪";
 
             case "roundabout":
                 return "⟳";
+
             case "uturn":
+            case "u-turn":
                 return "↶";
+
             case "merge":
                 return "⇢";
+
             case "fork":
                 return "⑂";
+
             case "arrive":
+            case "arrival":
                 return "●";
+
             case "depart":
+            case "departure":
                 return "↑";
+
+            case "continue":
+                return "↑";
+
             default:
                 return "↑";
         }
     }
 
-    function buildInstruction(type, modifier) {
-        if (type === "turn") {
+    function buildInstruction(
+        type,
+        modifier
+    ) {
+        const normalized =
+            String(
+                type || ""
+            ).toLowerCase();
 
-            if (modifier === "left") {
+        if (
+            normalized ===
+            "turn"
+        ) {
+            if (
+                modifier ===
+                "left"
+            ) {
                 return "Skreni levo";
             }
-            if (modifier === "right") {
+
+            if (
+                modifier ===
+                "right"
+            ) {
                 return "Skreni desno";
             }
+
             return "Skretanje";
         }
-        if (type === "roundabout") {
+
+        if (
+            normalized ===
+            "roundabout"
+        ) {
             return "Uđi u kružni tok";
         }
-        if (type === "uturn") {
+
+        if (
+            normalized ===
+            "uturn" ||
+            normalized ===
+            "u-turn"
+        ) {
             return "Polukružno okretanje";
         }
-        if (type === "arrive") {
+
+        if (
+            normalized ===
+            "merge"
+        ) {
+            return "Uključi se";
+        }
+
+        if (
+            normalized ===
+            "fork"
+        ) {
+            if (
+                modifier ===
+                "left"
+            ) {
+                return "Drži levo";
+            }
+
+            if (
+                modifier ===
+                "right"
+            ) {
+                return "Drži desno";
+            }
+
+            return "Račvanje puta";
+        }
+
+        if (
+            normalized ===
+            "arrive" ||
+            normalized ===
+            "arrival"
+        ) {
             return "Stigli ste na odredište";
         }
+
+        if (
+            normalized ===
+            "depart" ||
+            normalized ===
+            "departure"
+        ) {
+            return "Polazak";
+        }
+
         return "Nastavi pravo";
     }
 
-    function formatDistance(meters) {
-        if (!Number.isFinite(meters)) {
+    function formatDistance(
+        meters
+    ) {
+        const value =
+            Number(meters);
+
+        if (
+            !Number.isFinite(
+                value
+            )
+        ) {
             return "—";
         }
-        if (meters < 1000) {
-            return `${Math.round(meters)} m`;
+
+        if (
+            value < 1000
+        ) {
+            return `${Math.round(
+                value
+            )} m`;
         }
-        return `${(meters / 1000).toFixed(1)} km`;
+
+        return `${(
+            value / 1000
+        ).toFixed(1)} km`;
     }
 
-    function formatDuration(seconds) {
-        if (!Number.isFinite(seconds)) {
+    function formatDuration(
+        seconds
+    ) {
+        const value =
+            Number(seconds);
+
+        if (
+            !Number.isFinite(
+                value
+            )
+        ) {
             return "—";
         }
-        const minutes = Math.round(seconds / 60);
-        if (minutes < 60) {
+
+        const minutes =
+            Math.max(
+                0,
+                Math.round(
+                    value / 60
+                )
+            );
+
+        if (
+            minutes < 60
+        ) {
             return `${minutes} min`;
         }
 
-        const hours = Math.floor(minutes / 60);
-        const remainder = minutes % 60;
+        const hours =
+            Math.floor(
+                minutes / 60
+            );
+
+        const remainder =
+            minutes % 60;
+
         return `${hours} h ${remainder} min`;
     }
 
     return {
         normalize,
+        getIcon,
+        buildInstruction,
         formatDistance,
         formatDuration
     };
-
 })();

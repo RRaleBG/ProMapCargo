@@ -3,7 +3,8 @@
 window.ProMap = window.ProMap || {};
 
 window.ProMap.Routing = (() => {
-    const DEFAULT_ENDPOINT = "/api/routing/route";
+    const DEFAULT_ENDPOINT =
+        "/api/routing/route";
 
     function numberOrNull(value) {
         const number = Number(value);
@@ -41,23 +42,27 @@ window.ProMap.Routing = (() => {
             return false;
         }
 
-        return Number.isFinite(point.latitude) &&
+        return (
+            Number.isFinite(point.latitude) &&
             Number.isFinite(point.longitude) &&
             point.latitude >= -90 &&
             point.latitude <= 90 &&
             point.longitude >= -180 &&
-            point.longitude <= 180;
+            point.longitude <= 180
+        );
     }
 
     function buildRequest(state = {}) {
-        const start = normalizeCoordinate(
-            state.start
-        );
+        const start =
+            normalizeCoordinate(
+                state.start
+            );
 
-        const destination = normalizeCoordinate(
-            state.destination ??
-            state.end
-        );
+        const destination =
+            normalizeCoordinate(
+                state.destination ??
+                state.end
+            );
 
         if (!validateCoordinate(start)) {
             throw new Error(
@@ -80,8 +85,10 @@ window.ProMap.Routing = (() => {
             start,
             destination,
             profile,
+
             avoidRestricted:
                 state.avoidRestricted !== false,
+
             departureAt:
                 state.departureAt ||
                 new Date().toISOString()
@@ -304,6 +311,18 @@ window.ProMap.Routing = (() => {
                 payload;
 
             throw error;
+        }
+
+        if (
+            !Array.isArray(
+                payload.routes
+            ) ||
+            payload.routes.length === 0
+        ) {
+            throw new Error(
+                payload.message ||
+                "Routing engine nije vratio nijednu rutu."
+            );
         }
 
         return payload;
