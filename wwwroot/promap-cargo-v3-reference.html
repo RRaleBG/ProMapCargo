@@ -346,14 +346,28 @@
         });
 
         function initMap() {
-            map = L.map('map', { zoomControl: false }).setView([44.817813, 20.457273], 11);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+            map = L.map('map', {
+                zoomControl: false
+            }).setView([44.817813, 20.457273], 11);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(map);
+
             zonesLayerGroup = L.layerGroup().addTo(map);
+
             routeCandidatesLayer = L.layerGroup().addTo(map);
             drawRestrictedZones();
-            map.on('click', e => { if (!isNavigating) handleMapClick([e.latlng.lng, e.latlng.lat]); });
+
+            map.on('click', e => {
+                if (!isNavigating)
+                    handleMapClick([e.latlng.lng, e.latlng.lat]);
+            });
+
             document.getElementById('input-start').value = 'Beograd (Centar)';
             document.getElementById('input-end').value = 'Novi Sad (Centar)';
+
             createCustomMarker(startCoords, 'start'); createCustomMarker(endCoords, 'end');
             calculateRoute();
         }
@@ -364,14 +378,19 @@
         }
 
         function speakText(text) {
-            if (!isVoiceEnabled || !text) return;
+            if (!isVoiceEnabled || !text)
+                return;
             const toast = document.getElementById('voice-subtitle-toast'), el = document.getElementById('voice-subtitle-text');
             el.textContent = text; toast.classList.remove('hidden');
+
             clearTimeout(window.voiceToastTimer); window.voiceToastTimer = setTimeout(() => toast.classList.add('hidden'), 4000);
-            if (!('speechSynthesis' in window)) return;
+            if (!('speechSynthesis' in window))
+                return;
+
             window.speechSynthesis.cancel();
             const u = new SpeechSynthesisUtterance(text); u.rate = .95; u.lang = 'sr-RS';
             const v = window.speechSynthesis.getVoices().find(x => /^(sr|hr|bs)/i.test(x.lang));
+
             if (v) u.voice = v;
             window.speechSynthesis.speak(u);
         }
@@ -379,7 +398,9 @@
         function toggleVoice() {
             isVoiceEnabled = !isVoiceEnabled;
             document.getElementById('voice-icon').className = isVoiceEnabled ? 'fa-solid fa-volume-high' : 'fa-solid fa-volume-xmark';
-            if (!isVoiceEnabled && 'speechSynthesis' in window) speechSynthesis.cancel();
+            if (!isVoiceEnabled && 'speechSynthesis' in window)
+                speechSynthesis.cancel();
+
             else speakText('Glasovno obaveštenje je uključeno.');
         }
 

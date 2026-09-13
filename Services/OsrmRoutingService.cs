@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Net.Http.Json;
 using System.Text.Json;
 using ProMapCargo.Api.Models;
 
@@ -87,7 +86,9 @@ public sealed class OsrmRoutingService(
             );
         }
 
-        var result = JsonSerializer.Deserialize<OsrmResponse>(content,
+        var result =
+            JsonSerializer.Deserialize<OsrmResponse>(
+                content,
                 new JsonSerializerOptions(
                     JsonSerializerDefaults.Web
                 )

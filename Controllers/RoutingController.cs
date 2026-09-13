@@ -1,5 +1,5 @@
-using System.Globalization;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ProMapCargo.Api.Models;
 using ProMapCargo.Api.Routing;
@@ -8,111 +8,76 @@ using ProMapCargo.Api.Services;
 namespace ProMapCargo.Api.Controllers;
 
 [ApiController]
-[Route("api/routing")]
-public sealed class RoutingController( IPostGisRoutingService postGis, IRoutingService legacy, IRestrictionEngine restrictions, ILogger<RoutingController> logger) : ControllerBase
+[Route("api/route")]
+public sealed class RoutingController(
+    IPostGisRoutingService postgis,
+    IRoutingService osrm,
+    IRestrictionEngine restrictions,
+    ILogger<RoutingController> logger)
+    : ControllerBase
 {
-    [HttpPost("route")]
-    public async Task<ActionResult<RouteResponse>> Route([FromBody] RouteRequest request, CancellationToken ct)
+    [HttpPost]
+    [AllowAnonymous]
+    public async Task<ActionResult<RouteResponse>> Calculate(
+        [FromBody] RouteRequest request,
+        CancellationToken ct)
     {
-        if (!IsValidPoint(request.Start))
+        try
+        {
+            Validate(request);
+        }
+        catch (ArgumentException ex)
         {
             return BadRequest(new
             {
-                code = "InvalidStart",
-                message = "Start mora sadržati validne geografske koordinate."
+                code = "InvalidRequest",
+                message = ex.Message
             });
         }
 
-        if (!IsValidPoint(request.Target))
-        {
-            return BadRequest(new
-            {
-                code = "InvalidDestination",
-                message = "Destination mora sadržati validne geografske koordinate."
-            });
-        }
-
-        var profile = string.IsNullOrWhiteSpace(request.Profile)
-            ? "truck"
-            : request.Profile.Trim().ToLowerInvariant();
-
-        var normalizedRequest = new RouteRequest
-        {
-            Start = request.Start,
-            Destination = request.Target,
-            Profile = profile,
-            AvoidRestricted = request.AvoidRestricted,
-            Truck = request.Truck,
-            DepartureAt = request.DepartureAt
-        };
-
-        logger.LogInformation("Routing request: {Profile} {StartLat},{StartLon} -> {EndLat},{EndLon}",
-            profile,
-            normalizedRequest.Start.Lat,
-            normalizedRequest.Start.Lon,
-            normalizedRequest.Target.Lat,
-            normalizedRequest.Target.Lon
-        );
-
         /*
-         * ============================================================
-         * 1. PRIMARY ENGINE: PostGIS / OSM graph
-         * ============================================================
+         * 1. PRVO pokušavamo pravi PostGIS/OSM truck routing.
          */
-
-        if (profile.Equals("truck", StringComparison.OrdinalIgnoreCase))
+        try
         {
-            try
+            var postgisResult =
+                await postgis.CalculateAsync(request, ct);
+
+            if (postgisResult.Code.Equals(
+                    "Ok",
+                    StringComparison.OrdinalIgnoreCase) &&
+                postgisResult.Routes.Count > 0)
             {
-                var postGisResult = await postGis.CalculateAsync(
-                    normalizedRequest,
-                    ct
-                );
-
-                if (postGisResult.Code.Equals(
-                        "Ok",
-                        StringComparison.OrdinalIgnoreCase)
-                    && postGisResult.Routes.Count > 0)
-                {
-                    logger.LogInformation(
-                        "PostGIS routing succeeded. Distance={Distance}m Duration={Duration}s",
-                        postGisResult.Routes[0].Distance,
-                        postGisResult.Routes[0].Duration
-                    );
-
-                    return Ok(postGisResult);
-                }
-
-                logger.LogWarning(
-                    "PostGIS routing did not produce a route. Code={Code}. Falling back to OSRM.",
-                    postGisResult.Code
-                );
+                return Ok(postgisResult);
             }
-            catch (Exception ex)
-            {
-                logger.LogWarning(
-                    ex,
-                    "PostGIS routing failed. Falling back to OSRM."
-                );
-            }
+
+            logger.LogInformation(
+                "PostGIS routing nije vratio rutu. Code={Code}",
+                postgisResult.Code);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "PostGIS routing nije dostupan. Prelazim na OSRM fallback.");
         }
 
         /*
-         * ============================================================
-         * 2. FALLBACK ENGINE: OSRM
-         * ============================================================
+         * 2. Ako PostGIS graph nije dostupan,
+         *    koristimo OSRM fallback.
          */
-
-        OsrmResponse osrm;
+        OsrmResponse osrmResponse;
 
         try
         {
-            osrm = await legacy.RouteAsync(
-                normalizedRequest,
-                ct
-            );
+            osrmResponse =
+                await osrm.RouteAsync(request, ct);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
@@ -120,229 +85,244 @@ public sealed class RoutingController( IPostGisRoutingService postGis, IRoutingS
         {
             logger.LogError(
                 ex,
-                "OSRM routing failed."
-            );
+                "OSRM routing takođe nije dostupan.");
 
             return StatusCode(
                 StatusCodes.Status503ServiceUnavailable,
                 new
                 {
                     code = "RoutingUnavailable",
-                    message = "Routing servis trenutno nije dostupan.",
-                    details = ex.Message
-                }
-            );
+                    message = "Routing servis trenutno nije dostupan."
+                });
         }
 
-        if (osrm is null)
-        {
-            return StatusCode(
-                StatusCodes.Status503ServiceUnavailable,
-                new
-                {
-                    code = "RoutingUnavailable",
-                    message = "Routing servis nije vratio odgovor."
-                }
-            );
-        }
-
-        if (!string.Equals(
-                osrm.Code,
+        if (!osrmResponse.Code.Equals(
                 "Ok",
-                StringComparison.OrdinalIgnoreCase))
+                StringComparison.OrdinalIgnoreCase) ||
+            osrmResponse.Routes.Count == 0)
         {
-            return StatusCode(
-                StatusCodes.Status502BadGateway,
-                new
-                {
-                    code = "OsrmError",
-                    message = "OSRM nije uspešno izračunao rutu.",
-                    osrmCode = osrm.Code
-                }
-            );
-        }
-
-        if (osrm.Routes is null || osrm.Routes.Count == 0)
-        {
-            return StatusCode(
-                StatusCodes.Status502BadGateway,
-                new
-                {
-                    code = "NoRoute",
-                    message = "OSRM nije pronašao rutu."
-                }
-            );
+            return BadRequest(new
+            {
+                code = osrmResponse.Code,
+                message = "Ruta nije pronađena."
+            });
         }
 
         /*
-         * ============================================================
-         * 3. Convert OsrmResponse -> RouteResponse
-         * ============================================================
+         * 3. OSRM route -> naš RouteCandidate model.
          */
+        var candidates =
+            new List<RouteCandidate>();
 
-        var routeCandidates = new List<RouteCandidate>();
-
-        foreach (var route in osrm.Routes)
+        foreach (var osrmRoute in osrmResponse.Routes)
         {
-            var points = ExtractPoints(route.Geometry);
+            var points =
+                ExtractPoints(osrmRoute.Geometry);
 
             IReadOnlyList<RestrictionViolation> violations;
 
-            if (profile.Equals(
+            if (request.Profile.Equals(
                     "truck",
                     StringComparison.OrdinalIgnoreCase))
             {
-                violations = await restrictions.Analyze(
-                    points,
-                    normalizedRequest.Truck,
-                    normalizedRequest.DepartureAt
-                );
+                violations =
+                    await restrictions.AnalyzeAsync(
+                        points,
+                        request.Truck,
+                        request.DepartureAt,
+                        ct);
             }
             else
             {
-                violations = Array.Empty<RestrictionViolation>();
+                violations = [];
             }
 
-            var violationList = violations.ToList();
+            var analysis =
+                new RouteAnalysis
+                {
+                    Restricted = violations.Count > 0,
+                    Score = violations.Count,
+                    Violations = violations.ToList()
+                };
 
-            var restricted = violationList.Count > 0;
-
-            /*
-             * Veći score = bolja ruta.
-             * Rute sa restrikcijama dobijaju penal.
-             */
-            var score = restricted
-                ? Math.Max(
-                    0,
-                    100 - violationList.Count * 20
-                )
-                : 100;
-
-            routeCandidates.Add(
+            candidates.Add(
                 new RouteCandidate
                 {
-                    Distance = route.Distance,
-                    Duration = route.Duration,
-                    Geometry = route.Geometry,
-                    Legs = route.Legs,
+                    Distance = osrmRoute.Distance,
+                    Duration = osrmRoute.Duration,
+                    Geometry = osrmRoute.Geometry,
+                    Legs = osrmRoute.Legs,
+                    Analysis = analysis
+                });
+        }
 
-                    Analysis = new RouteAnalysis
-                    {
-                        Restricted = restricted,
-                        Score = score,
-                        Violations = violationList
-                    }
-                }
-            );
+        if (candidates.Count == 0)
+        {
+            return BadRequest(new
+            {
+                code = "NoRoute",
+                message = "Ruta nije pronađena."
+            });
         }
 
         /*
-         * ============================================================
-         * 4. Izbor najbolje OSRM rute
-         * ============================================================
+         * 4. Izbor najbolje alternative.
+         *
+         * Ako korisnik traži izbegavanje restrikcija:
+         *   prvo biramo rutu bez restrikcija,
+         *   zatim najkraće vreme.
+         *
+         * Ako nema takve rute:
+         *   biramo najkraće vreme.
          */
+        var selectedIndex =
+            Enumerable
+                .Range(0, candidates.Count)
+                .OrderBy(index =>
+                    request.AvoidRestricted &&
+                    candidates[index].Analysis.Restricted)
+                .ThenBy(index =>
+                    candidates[index].Duration)
+                .First();
 
-        var selectedRouteIndex = 0;
+        var selected =
+            candidates[selectedIndex];
 
-        if (routeCandidates.Count > 1)
-        {
-            var truckCandidates = routeCandidates
-                .Select(
-                    (route, index) => new
-                    {
-                        Route = route,
-                        Index = index
-                    }
-                )
-                .OrderByDescending(x => x.Route.Analysis.Score)
-                .ThenBy(x => x.Route.Distance)
+        /*
+         * 5. Skupljamo sve jedinstvene violation-e.
+         */
+        var allViolations =
+            candidates
+                .SelectMany(x => x.Analysis.Violations)
+                .GroupBy(x => x.Id)
+                .Select(x => x.First())
                 .ToList();
 
-            selectedRouteIndex = truckCandidates[0].Index;
-        }
-
-        var selectedRoute =
-            routeCandidates[selectedRouteIndex];
-
-        var selectedViolations =
-            selectedRoute.Analysis.Violations;
-
-        var isTruckSafe =
-            !profile.Equals(
-                "truck",
-                StringComparison.OrdinalIgnoreCase
-            )
-            || selectedViolations.Count == 0;
-
         /*
-         * ============================================================
-         * 5. Geometry / maneuvers
-         * ============================================================
-         *
-         * Trenutni OsrmResponse model nema Maneuvers property.
-         * Zato ovde ne pokušavamo da čitamo nepostojeće polje.
-         *
-         * Navigation UI može koristiti geometry + legs,
-         * a maneuvers možemo dodati u sledećem koraku.
+         * 6. Kreiramo standardni RouteResponse.
          */
+        var estimatedArrival =
+            (request.DepartureAt ?? DateTimeOffset.UtcNow)
+            .AddSeconds(selected.Duration);
 
-        var summary = new RouteSummary(
-            selectedRoute.Distance,
-            selectedRoute.Duration,
-            (
-                normalizedRequest.DepartureAt
-                ?? DateTimeOffset.UtcNow
-            ).AddSeconds(selectedRoute.Duration)
-        );
+        var response =
+            new RouteResponse
+            {
+                Code = "Ok",
 
-        var response = new RouteResponse
-        {
-            Code = "Ok",
+                Routes = candidates,
 
-            Routes = routeCandidates,
+                SelectedRouteIndex = selectedIndex,
 
-            SelectedRouteIndex =
-                selectedRouteIndex,
+                IsTruckSafe =
+                    !selected.Analysis.Restricted,
 
-            IsTruckSafe =
-                isTruckSafe,
+                Violations = allViolations,
 
-            Violations =
-                selectedViolations,
+                Summary =
+                    new RouteSummary(
+                        selected.Distance,
+                        selected.Duration,
+                        estimatedArrival),
 
-            Summary =
-                summary,
+                Diagnostics =
+                    new RouteDiagnostics
+                    {
+                        Engine = "OSRM",
+                        UsedFallback = true,
+                        ExpandedStates = 0,
+                        GraphVersion = null,
+                        FailureReason =
+                            "PostGIS graph nije korišćen; ruta je dobijena preko OSRM fallback-a."
+                    },
 
-            Diagnostics =
-                new RouteDiagnostics
-                {
-                    Engine = "OSRM",
-                    UsedFallback = true,
-                    ExpandedStates = 0,
-                    GraphVersion = null,
-                    FailureReason = null
-                },
-
-            Maneuvers = []
-        };
-
-        logger.LogInformation(
-            "OSRM fallback succeeded. Routes={Routes}, Selected={Selected}, Distance={Distance}m, Duration={Duration}s, TruckSafe={TruckSafe}",
-            routeCandidates.Count,
-            selectedRouteIndex,
-            selectedRoute.Distance,
-            selectedRoute.Duration,
-            isTruckSafe
-        );
+                Maneuvers = ExtractManeuvers(selected.Legs)
+            };
 
         return Ok(response);
     }
 
-    /*
-     * ================================================================
-     * Geometry extraction
-     * ================================================================
-     */
+    private static void Validate(RouteRequest request)
+    {
+        if (request is null)
+        {
+            throw new ArgumentException(
+                "Route request nije prosleđen.");
+        }
+
+        ValidatePoint(
+            request.Start,
+            "Start");
+
+        ValidatePoint(
+            request.Target,
+            "Destination");
+
+        if (request.Truck is null)
+        {
+            return;
+        }
+
+        if (request.Truck.GrossWeightTons <= 0)
+        {
+            throw new ArgumentException(
+                "Masa kamiona mora biti veća od 0.");
+        }
+
+        if (request.Truck.HeightMeters <= 0)
+        {
+            throw new ArgumentException(
+                "Visina kamiona mora biti veća od 0.");
+        }
+
+        if (request.Truck.WidthMeters <= 0)
+        {
+            throw new ArgumentException(
+                "Širina kamiona mora biti veća od 0.");
+        }
+
+        if (request.Truck.LengthMeters <= 0)
+        {
+            throw new ArgumentException(
+                "Dužina kamiona mora biti veća od 0.");
+        }
+
+        if (request.Truck.AxleLoadTons is not null &&
+            request.Truck.AxleLoadTons <= 0)
+        {
+            throw new ArgumentException(
+                "Osovinsko opterećenje mora biti veće od 0.");
+        }
+    }
+
+    private static void ValidatePoint(
+        GeoPoint point,
+        string name)
+    {
+        if (point is null)
+        {
+            throw new ArgumentException(
+                $"{name} nije definisan.");
+        }
+
+        if (double.IsNaN(point.Lat) ||
+            double.IsInfinity(point.Lat) ||
+            point.Lat < -90 ||
+            point.Lat > 90)
+        {
+            throw new ArgumentException(
+                $"{name} ima neispravnu geografsku širinu.");
+        }
+
+        if (double.IsNaN(point.Lon) ||
+            double.IsInfinity(point.Lon) ||
+            point.Lon < -180 ||
+            point.Lon > 180)
+        {
+            throw new ArgumentException(
+                $"{name} ima neispravnu geografsku dužinu.");
+        }
+    }
 
     private static List<GeoPoint> ExtractPoints(
         object? geometry)
@@ -354,21 +334,120 @@ public sealed class RoutingController( IPostGisRoutingService postGis, IRoutingS
 
         try
         {
-            if (geometry is JsonElement element)
+            using var document =
+                JsonDocument.Parse(
+                    JsonSerializer.Serialize(geometry));
+
+            var root =
+                document.RootElement;
+
+            /*
+             * Podržavamo:
+             *
+             * {
+             *   "type": "LineString",
+             *   "coordinates": [...]
+             * }
+             *
+             * i Feature:
+             *
+             * {
+             *   "type": "Feature",
+             *   "geometry": {...}
+             * }
+             */
+
+            if (root.ValueKind != JsonValueKind.Object)
             {
-                return ExtractPointsFromJson(element);
+                return [];
             }
 
-            var json = JsonSerializer.Serialize(
-                geometry
-            );
+            if (root.TryGetProperty(
+                    "geometry",
+                    out var featureGeometry) &&
+                featureGeometry.ValueKind ==
+                    JsonValueKind.Object)
+            {
+                root = featureGeometry;
+            }
 
-            using var document =
-                JsonDocument.Parse(json);
+            if (!root.TryGetProperty(
+                    "coordinates",
+                    out var coordinates))
+            {
+                return [];
+            }
 
-            return ExtractPointsFromJson(
-                document.RootElement
-            );
+            if (coordinates.ValueKind !=
+                JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            /*
+             * LineString:
+             *
+             * [
+             *   [longitude, latitude],
+             *   [longitude, latitude]
+             * ]
+             */
+            if (coordinates.GetArrayLength() == 0)
+            {
+                return [];
+            }
+
+            var first =
+                coordinates[0];
+
+            if (first.ValueKind !=
+                JsonValueKind.Array ||
+                first.GetArrayLength() < 2)
+            {
+                return [];
+            }
+
+            var result =
+                new List<GeoPoint>();
+
+            foreach (var coordinate in coordinates.EnumerateArray())
+            {
+                if (coordinate.ValueKind !=
+                    JsonValueKind.Array ||
+                    coordinate.GetArrayLength() < 2)
+                {
+                    continue;
+                }
+
+                var lon =
+                    coordinate[0].GetDouble();
+
+                var lat =
+                    coordinate[1].GetDouble();
+
+                if (double.IsNaN(lat) ||
+                    double.IsNaN(lon) ||
+                    double.IsInfinity(lat) ||
+                    double.IsInfinity(lon))
+                {
+                    continue;
+                }
+
+                if (lat < -90 ||
+                    lat > 90 ||
+                    lon < -180 ||
+                    lon > 180)
+                {
+                    continue;
+                }
+
+                result.Add(
+                    new GeoPoint(
+                        lat,
+                        lon));
+            }
+
+            return result;
         }
         catch
         {
@@ -376,188 +455,16 @@ public sealed class RoutingController( IPostGisRoutingService postGis, IRoutingS
         }
     }
 
-    private static List<GeoPoint> ExtractPointsFromJson(
-        JsonElement root)
+    private static List<RouteManeuverDto> ExtractManeuvers(
+        object? legs)
     {
-        if (root.ValueKind != JsonValueKind.Object)
-        {
-            return [];
-        }
-
         /*
-         * GeoJSON Feature
+         * OSRM legs mogu imati različite JSON strukture.
+         * Za sada ne izmišljamo maneuver podatke.
+         *
+         * Navigation frontend može koristiti geometry
+         * čak i kada OSRM nema parsirane maneuvre.
          */
-
-        if (
-            root.TryGetProperty(
-                "type",
-                out var typeProperty
-            )
-            && typeProperty.ValueKind ==
-               JsonValueKind.String
-            && string.Equals(
-                typeProperty.GetString(),
-                "Feature",
-                StringComparison.OrdinalIgnoreCase
-            )
-        )
-        {
-            if (
-                root.TryGetProperty(
-                    "geometry",
-                    out var featureGeometry
-                )
-            )
-            {
-                return ExtractPointsFromJson(
-                    featureGeometry
-                );
-            }
-        }
-
-        /*
-         * GeoJSON Geometry
-         */
-
-        if (
-            root.TryGetProperty(
-                "coordinates",
-                out var coordinates
-            )
-        )
-        {
-            if (
-                root.TryGetProperty(
-                    "type",
-                    out var geometryType
-                )
-                && geometryType.ValueKind ==
-                   JsonValueKind.String
-            )
-            {
-                var type =
-                    geometryType.GetString();
-
-                if (string.Equals(
-                        type,
-                        "LineString",
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    return ParseLineString(
-                        coordinates
-                    );
-                }
-
-                if (string.Equals(
-                        type,
-                        "MultiLineString",
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    var result =
-                        new List<GeoPoint>();
-
-                    foreach (
-                        var line in coordinates.EnumerateArray()
-                    )
-                    {
-                        result.AddRange(
-                            ParseLineString(line)
-                        );
-                    }
-
-                    return result;
-                }
-            }
-
-            /*
-             * Ako nema type, pokušaj direktno
-             * da protumačiš coordinates kao LineString.
-             */
-
-            return ParseLineString(
-                coordinates
-            );
-        }
-
         return [];
-    }
-
-    private static List<GeoPoint> ParseLineString(
-        JsonElement coordinates)
-    {
-        var result =
-            new List<GeoPoint>();
-
-        if (coordinates.ValueKind !=
-            JsonValueKind.Array)
-        {
-            return result;
-        }
-
-        foreach (
-            var coordinate in
-            coordinates.EnumerateArray()
-        )
-        {
-            if (
-                coordinate.ValueKind !=
-                JsonValueKind.Array
-                || coordinate.GetArrayLength() < 2
-            )
-            {
-                continue;
-            }
-
-            var lon =
-                coordinate[0].GetDouble();
-
-            var lat =
-                coordinate[1].GetDouble();
-
-            if (
-                !double.IsFinite(lat)
-                || !double.IsFinite(lon)
-            )
-            {
-                continue;
-            }
-
-            result.Add(
-                new GeoPoint(
-                    lat,
-                    lon
-                )
-            );
-        }
-
-        return result;
-    }
-
-    /*
-     * ================================================================
-     * Coordinate validation
-     * ================================================================
-     */
-
-    private static bool IsValidPoint(
-        GeoPoint? point)
-    {
-        if (point is null)
-        {
-            return false;
-        }
-
-        if (
-            !double.IsFinite(point.Lat)
-            || !double.IsFinite(point.Lon)
-        )
-        {
-            return false;
-        }
-
-        return point.Lat >= -90
-            && point.Lat <= 90
-            && point.Lon >= -180
-            && point.Lon <= 180;
     }
 }

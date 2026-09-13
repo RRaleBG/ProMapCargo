@@ -2,69 +2,196 @@ using ProMapCargo.Api.Models;
 
 namespace ProMapCargo.Api.Services;
 
-public sealed class PostgresRestrictionEngine(IPostgresRestrictionRepository repository)
-: IRestrictionEngine
+public sealed class PostgresRestrictionEngine(
+    IPostgresRestrictionRepository repository)
+    : IRestrictionEngine
 {
-    public async Task<IReadOnlyList<RestrictionViolation>> Analyze(
+    public async Task<IReadOnlyList<RestrictionViolation>> AnalyzeAsync(
         IEnumerable<GeoPoint> routePoints,
         TruckProfile? truck,
-        DateTimeOffset? departureAt)
+        DateTimeOffset? departureAt,
+        CancellationToken ct)
     {
-        if (truck is null) return [];
-        var points = routePoints.ToList();
-        var restrictions = await repository.FindNearRouteAsync(points, 80, CancellationToken.None);
-        var result = new List<RestrictionViolation>();
-        foreach (var r in restrictions)
+        if (truck is null)
         {
-            if (!Applies(r, truck, departureAt)) continue;
+            return [];
+        }
+
+        var points = routePoints
+            .Where(p =>
+                p.Lat >= -90 &&
+                p.Lat <= 90 &&
+                p.Lon >= -180 &&
+                p.Lon <= 180)
+            .ToList();
+
+        if (points.Count == 0)
+        {
+            return [];
+        }
+
+        var restrictions = await repository.FindNearRouteAsync(
+            points,
+            80,
+            ct);
+
+        var result = new List<RestrictionViolation>();
+
+        foreach (var restriction in restrictions)
+        {
+            if (!Applies(restriction, truck, departureAt))
+            {
+                continue;
+            }
+
             result.Add(new RestrictionViolation
             {
-                Id = r.Id.ToString(),
-                Name = string.IsNullOrWhiteSpace(r.Name) ? $"OSM way {r.OsmWayId}" : r.Name,
-                Type = r.RestrictionType,
-                Reason = Reason(r, truck)
+                Id = restriction.Id.ToString(),
+                Name = string.IsNullOrWhiteSpace(restriction.Name)
+                    ? $"OSM way {restriction.OsmWayId}"
+                    : restriction.Name,
+                Type = restriction.RestrictionType,
+                Reason = BuildReason(restriction, truck)
             });
         }
+
         return result;
     }
 
-    private static bool Applies(RoadRestriction r, TruckProfile t, DateTimeOffset? departureAt)
+    private static bool Applies(
+        RoadRestriction restriction,
+        TruckProfile truck,
+        DateTimeOffset? departureAt)
     {
-        if (r.HgvBan && t.IsHgv) return true;
-        if (r.HazmatBan && !string.IsNullOrWhiteSpace(t.AdrClass)) return true;
-        if (r.MaxWeightTons is not null && t.GrossWeightTons > r.MaxWeightTons) return true;
-        if (r.MaxHeightMeters is not null && t.HeightMeters > r.MaxHeightMeters) return true;
-        if (r.MaxWidthMeters is not null && t.WidthMeters > r.MaxWidthMeters) return true;
-        if (r.MaxLengthMeters is not null && t.LengthMeters > r.MaxLengthMeters) return true;
-        if (r.MaxAxleLoadTons is not null && t.AxleLoadTons > r.MaxAxleLoadTons) return true;
-        if (departureAt is not null && r.TimeFrom is not null && r.TimeTo is not null)
+        if (restriction.HgvBan && truck.IsHgv)
+        {
+            return true;
+        }
+
+        if (restriction.HazmatBan &&
+            (truck.Hazmat || !string.IsNullOrWhiteSpace(truck.AdrClass)))
+        {
+            return true;
+        }
+
+        if (restriction.MaxWeightTons is not null &&
+            truck.GrossWeightTons > restriction.MaxWeightTons.Value)
+        {
+            return true;
+        }
+
+        if (restriction.MaxHeightMeters is not null &&
+            truck.HeightMeters > restriction.MaxHeightMeters.Value)
+        {
+            return true;
+        }
+
+        if (restriction.MaxWidthMeters is not null &&
+            truck.WidthMeters > restriction.MaxWidthMeters.Value)
+        {
+            return true;
+        }
+
+        if (restriction.MaxLengthMeters is not null &&
+            truck.LengthMeters > restriction.MaxLengthMeters.Value)
+        {
+            return true;
+        }
+
+        if (restriction.MaxAxleLoadTons is not null &&
+            truck.AxleLoadTons is not null &&
+            truck.AxleLoadTons.Value > restriction.MaxAxleLoadTons.Value)
+        {
+            return true;
+        }
+
+        if (departureAt is not null &&
+            restriction.TimeFrom is not null &&
+            restriction.TimeTo is not null)
         {
             var time = departureAt.Value.TimeOfDay;
-            var active = r.TimeFrom <= r.TimeTo
-            ? time >= r.TimeFrom && time <= r.TimeTo
-            : time >= r.TimeFrom || time <= r.TimeTo;
-            if (active) return true;
+
+            var active =
+                restriction.TimeFrom <= restriction.TimeTo
+                    ? time >= restriction.TimeFrom &&
+                      time <= restriction.TimeTo
+                    : time >= restriction.TimeFrom ||
+                      time <= restriction.TimeTo;
+
+            if (active)
+            {
+                return true;
+            }
         }
+
         return false;
     }
 
-    private static string Reason(RoadRestriction r, TruckProfile t)
+    private static string BuildReason(
+        RoadRestriction restriction,
+        TruckProfile truck)
     {
         var reasons = new List<string>();
-        if (r.MaxWeightTons is not null && t.GrossWeightTons > r.MaxWeightTons)
-            reasons.Add($"masa {t.GrossWeightTons}t > {r.MaxWeightTons}t");
-        if (r.MaxHeightMeters is not null && t.HeightMeters > r.MaxHeightMeters)
-            reasons.Add($"visina {t.HeightMeters}m > {r.MaxHeightMeters}m");
-        if (r.MaxWidthMeters is not null && t.WidthMeters > r.MaxWidthMeters)
-            reasons.Add($"širina {t.WidthMeters}m > {r.MaxWidthMeters}m");
-        if (r.MaxLengthMeters is not null && t.LengthMeters > r.MaxLengthMeters)
-            reasons.Add($"dužina {t.LengthMeters}m > {r.MaxLengthMeters}m");
-        if (r.MaxAxleLoadTons is not null && t.AxleLoadTons > r.MaxAxleLoadTons)
-            reasons.Add($"osovinsko opterećenje {t.AxleLoadTons}t > {r.MaxAxleLoadTons}t");
-        if (r.HgvBan && t.IsHgv) reasons.Add("HGV zabrana");
-        if (r.HazmatBan && !string.IsNullOrWhiteSpace(t.AdrClass)) reasons.Add($"ADR {t.AdrClass}");
-        if (r.TimeFrom is not null && r.TimeTo is not null)
-            reasons.Add($"vremensko ograničenje {r.TimeFrom}-{r.TimeTo}");
-        return string.Join("; ", reasons);
+
+        if (restriction.MaxWeightTons is not null &&
+            truck.GrossWeightTons > restriction.MaxWeightTons.Value)
+        {
+            reasons.Add(
+                $"masa {truck.GrossWeightTons}t > {restriction.MaxWeightTons.Value}t");
+        }
+
+        if (restriction.MaxHeightMeters is not null &&
+            truck.HeightMeters > restriction.MaxHeightMeters.Value)
+        {
+            reasons.Add(
+                $"visina {truck.HeightMeters}m > {restriction.MaxHeightMeters.Value}m");
+        }
+
+        if (restriction.MaxWidthMeters is not null &&
+            truck.WidthMeters > restriction.MaxWidthMeters.Value)
+        {
+            reasons.Add(
+                $"širina {truck.WidthMeters}m > {restriction.MaxWidthMeters.Value}m");
+        }
+
+        if (restriction.MaxLengthMeters is not null &&
+            truck.LengthMeters > restriction.MaxLengthMeters.Value)
+        {
+            reasons.Add(
+                $"dužina {truck.LengthMeters}m > {restriction.MaxLengthMeters.Value}m");
+        }
+
+        if (restriction.MaxAxleLoadTons is not null &&
+            truck.AxleLoadTons is not null &&
+            truck.AxleLoadTons.Value > restriction.MaxAxleLoadTons.Value)
+        {
+            reasons.Add(
+                $"osovinsko opterećenje {truck.AxleLoadTons.Value}t > {restriction.MaxAxleLoadTons.Value}t");
+        }
+
+        if (restriction.HgvBan && truck.IsHgv)
+        {
+            reasons.Add("HGV zabrana");
+        }
+
+        if (restriction.HazmatBan &&
+            (truck.Hazmat || !string.IsNullOrWhiteSpace(truck.AdrClass)))
+        {
+            reasons.Add(
+                string.IsNullOrWhiteSpace(truck.AdrClass)
+                    ? "ADR / opasna roba"
+                    : $"ADR {truck.AdrClass}");
+        }
+
+        if (restriction.TimeFrom is not null &&
+            restriction.TimeTo is not null)
+        {
+            reasons.Add(
+                $"vremensko ograničenje {restriction.TimeFrom}-{restriction.TimeTo}");
+        }
+
+        return reasons.Count == 0
+            ? "Vozilo nije kompatibilno sa ograničenjem."
+            : string.Join("; ", reasons);
     }
 }

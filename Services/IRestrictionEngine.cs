@@ -4,8 +4,9 @@ namespace ProMapCargo.Api.Services;
 
 public interface IRestrictionEngine
 {
-    Task<IReadOnlyList<RestrictionViolation>> Analyze(
+    Task<IReadOnlyList<RestrictionViolation>> AnalyzeAsync(
         IEnumerable<GeoPoint> routePoints,
         TruckProfile? truck,
-        DateTimeOffset? departureAt);
+        DateTimeOffset? departureAt,
+        CancellationToken ct);
 }

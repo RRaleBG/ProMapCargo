@@ -88,7 +88,6 @@
         }
 
         element.textContent = message || "";
-
         element.style.display = message ? "block" : "none";
     }
 
@@ -100,7 +99,6 @@
         }
 
         element.textContent = text;
-
         element.className = "nav-chip";
 
         if (type === "ready") {
@@ -120,7 +118,6 @@
         }
 
         element.textContent = text;
-
         element.className = "nav-chip";
 
         if (type === "ready") {
@@ -142,7 +139,6 @@
             : engine || "PostGIS";
 
         setText("engineBadge", `Routing: ${value}`);
-
         setText("summaryEngine", value);
 
         const footer = $("engineFooter");
@@ -180,7 +176,6 @@
         }
 
         const hours = Math.floor(totalMinutes / 60);
-
         const minutes = totalMinutes % 60;
 
         return `${hours} h ${minutes} min`;
@@ -210,18 +205,24 @@
             return Infinity;
         }
 
+        if (
+            !Number.isFinite(Number(a.lat)) ||
+            !Number.isFinite(Number(a.lon)) ||
+            !Number.isFinite(Number(b.lat)) ||
+            !Number.isFinite(Number(b.lon))
+        ) {
+            return Infinity;
+        }
+
         const R = 6371000;
 
         const lat1 = (a.lat * Math.PI) / 180;
-
         const lat2 = (b.lat * Math.PI) / 180;
 
         const dLat = ((b.lat - a.lat) * Math.PI) / 180;
-
         const dLon = ((b.lon - a.lon) * Math.PI) / 180;
 
         const sinLat = Math.sin(dLat / 2);
-
         const sinLon = Math.sin(dLon / 2);
 
         const h =
@@ -235,9 +236,13 @@
             return null;
         }
 
-        const latitude = Number(point.latitude ?? point.lat ?? point.Lat);
+        const latitude = Number(
+            point.latitude ?? point.lat ?? point.Lat ?? point.coords?.latitude,
+        );
 
-        const longitude = Number(point.longitude ?? point.lon ?? point.Lon);
+        const longitude = Number(
+            point.longitude ?? point.lon ?? point.Lon ?? point.coords?.longitude,
+        );
 
         if (
             !Number.isFinite(latitude) ||
@@ -263,6 +268,70 @@
         };
     }
 
+    function normalizeGpsPosition(position) {
+        if (!position) {
+            return null;
+        }
+
+        const source =
+            position.coords && typeof position.coords === "object"
+                ? position.coords
+                : position;
+
+        const latitude = Number(
+            source.latitude ??
+            source.lat ??
+            source.Lat ??
+            position.latitude ??
+            position.lat ??
+            position.Lat,
+        );
+
+        const longitude = Number(
+            source.longitude ??
+            source.lon ??
+            source.Lon ??
+            position.longitude ??
+            position.lon ??
+            position.Lon,
+        );
+
+        const accuracy = Number(source.accuracy ?? position.accuracy);
+
+        const speed = Number(source.speed ?? position.speed);
+
+        const heading = Number(source.heading ?? position.heading);
+
+        if (
+            !Number.isFinite(latitude) ||
+            !Number.isFinite(longitude) ||
+            latitude < -90 ||
+            latitude > 90 ||
+            longitude < -180 ||
+            longitude > 180
+        ) {
+            console.error(
+                "ProMap Cargo: GPS position nema validne koordinate.",
+                position,
+            );
+
+            return null;
+        }
+
+        return {
+            latitude,
+            longitude,
+
+            accuracy: Number.isFinite(accuracy) ? accuracy : null,
+
+            speed: Number.isFinite(speed) ? speed : null,
+
+            heading: Number.isFinite(heading) ? heading : null,
+
+            timestamp: position.timestamp ?? source.timestamp ?? Date.now(),
+        };
+    }
+
     function parseCoordinates(value) {
         if (!value) {
             return null;
@@ -279,7 +348,6 @@
         }
 
         const latitude = Number(match[1].replace(",", "."));
-
         const longitude = Number(match[2].replace(",", "."));
 
         return normalizePoint({
@@ -294,6 +362,14 @@
         }
 
         let value = geometry;
+
+        if (typeof value === "string") {
+            try {
+                value = JSON.parse(value);
+            } catch {
+                return [];
+            }
+        }
 
         if (value.type === "Feature") {
             value = value.geometry;
@@ -320,7 +396,12 @@
 
             for (const line of value.coordinates || []) {
                 for (const point of line || []) {
-                    if (Array.isArray(point) && point.length >= 2) {
+                    if (
+                        Array.isArray(point) &&
+                        point.length >= 2 &&
+                        Number.isFinite(Number(point[0])) &&
+                        Number.isFinite(Number(point[1]))
+                    ) {
                         result.push([Number(point[1]), Number(point[0])]);
                     }
                 }
@@ -356,7 +437,6 @@
 
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
             maxZoom: 19,
-
             attribution: "© OpenStreetMap contributors",
         }).addTo(state.map);
 
@@ -365,17 +445,28 @@
                 return;
             }
 
+            if (
+                !event ||
+                !event.latlng ||
+                !Number.isFinite(event.latlng.lat) ||
+                !Number.isFinite(event.latlng.lng)
+            ) {
+                return;
+            }
+
             const point = {
                 lat: event.latlng.lat,
-
                 lon: event.latlng.lng,
             };
 
             if (state.mapPickTarget === "start") {
                 state.start = point;
 
-                $("navStart").value =
-                    `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`;
+                const input = $("navStart");
+
+                if (input) {
+                    input.value = `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`;
+                }
 
                 setText(
                     "navStartResolved",
@@ -388,7 +479,11 @@
             if (state.mapPickTarget === "end") {
                 state.end = point;
 
-                $("navEnd").value = `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`;
+                const input = $("navEnd");
+
+                if (input) {
+                    input.value = `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`;
+                }
 
                 setText(
                     "navEndResolved",
@@ -407,16 +502,28 @@
             return;
         }
 
+        const point = normalizePoint(state.start);
+
+        if (!point) {
+            console.warn(
+                "ProMap Cargo: start marker skipped because coordinates are invalid.",
+                state.start,
+            );
+
+            return;
+        }
+
+        state.start = point;
+
         if (state.startMarker) {
             state.startMarker.remove();
         }
 
-        state.startMarker = L.marker([state.start.lat, state.start.lon])
+        state.startMarker = L.marker([point.lat, point.lon])
             .addTo(state.map)
             .bindPopup(
                 `<strong>START</strong><br>${escapeHtml(
-                    state.start.label ||
-                    `${state.start.lat.toFixed(6)}, ${state.start.lon.toFixed(6)}`,
+                    point.label || `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`,
                 )}`,
             );
     }
@@ -426,16 +533,28 @@
             return;
         }
 
+        const point = normalizePoint(state.end);
+
+        if (!point) {
+            console.warn(
+                "ProMap Cargo: destination marker skipped because coordinates are invalid.",
+                state.end,
+            );
+
+            return;
+        }
+
+        state.end = point;
+
         if (state.endMarker) {
             state.endMarker.remove();
         }
 
-        state.endMarker = L.marker([state.end.lat, state.end.lon])
+        state.endMarker = L.marker([point.lat, point.lon])
             .addTo(state.map)
             .bindPopup(
                 `<strong>DESTINACIJA</strong><br>${escapeHtml(
-                    state.end.label ||
-                    `${state.end.lat.toFixed(6)}, ${state.end.lon.toFixed(6)}`,
+                    point.label || `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`,
                 )}`,
             );
     }
@@ -453,9 +572,7 @@
         }
 
         state.routeLayers = [];
-
         state.routeCoordinates = [];
-
         state.maneuvers = [];
     }
 
@@ -463,19 +580,13 @@
         clearRouteLayers();
 
         state.routeResponse = null;
-
         state.selectedRouteIndex = 0;
 
         setText("summaryDistance", "—");
-
         setText("summaryDuration", "—");
-
         setText("summaryEta", "—");
-
         setText("summarySafety", "—");
-
         setText("summaryEngine", "—");
-
         setText("summaryDiagnostics", "—");
 
         setText("nextInstructionText", "Izračunajte rutu.");
@@ -487,9 +598,7 @@
         setNavigationStatus("READY", "ready");
 
         const alternatives = $("alternativesCard");
-
         const warnings = $("warningsCard");
-
         const maneuvers = $("maneuversCard");
 
         if (alternatives) {
@@ -517,13 +626,11 @@
         const request = {
             start: {
                 latitude: start.lat,
-
                 longitude: start.lon,
             },
 
             destination: {
                 latitude: end.lat,
-
                 longitude: end.lon,
             },
 
@@ -567,7 +674,6 @@
 
     function validateRequest(request) {
         const start = request.start;
-
         const destination = request.destination;
 
         if (
@@ -667,7 +773,6 @@
 
         if (!Array.isArray(data) || data.length === 0) {
             container.innerHTML = "";
-
             container.style.display = "none";
 
             return;
@@ -676,17 +781,17 @@
         container.innerHTML = data
             .map(
                 (item, index) => `
-                        <div
-                            class="nav-suggestion"
-                            data-index="${index}">
-                            ${escapeHtml(
+                    <div
+                        class="nav-suggestion"
+                        data-index="${index}">
+                        ${escapeHtml(
                     item.displayName ??
                     item.display_name ??
                     item.Display_Name ??
                     `${item.lat}, ${item.lon}`,
                 )}
-                        </div>
-                    `,
+                    </div>
+                `,
             )
             .join("");
 
@@ -713,8 +818,12 @@
                     return;
                 }
 
-                $(inputId).value =
-                    point.label || `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`;
+                const input = $(inputId);
+
+                if (input) {
+                    input.value =
+                        point.label || `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`;
+                }
 
                 state[inputId === "navStart" ? "start" : "end"] = point;
 
@@ -758,7 +867,6 @@
 
             if (box) {
                 box.innerHTML = "";
-
                 box.style.display = "none";
             }
 
@@ -804,7 +912,7 @@
         }
 
         if (!query) {
-            return fallbackPoint;
+            return normalizePoint(fallbackPoint);
         }
 
         const result = await geocode(query);
@@ -828,28 +936,50 @@
             throw new Error("Start i destinacija moraju biti definisani.");
         }
 
-        state.start = start;
+        const normalizedStart = normalizePoint(start);
 
-        state.end = end;
+        const normalizedEnd = normalizePoint(end);
+
+        if (!normalizedStart || !normalizedEnd) {
+            throw new Error(
+                "Start i destinacija moraju sadržati validne geografske koordinate.",
+            );
+        }
+
+        state.start = normalizedStart;
+
+        state.end = normalizedEnd;
 
         setText(
             "navStartResolved",
-            `${start.lat.toFixed(6)}, ${start.lon.toFixed(6)}`,
+            `${normalizedStart.lat.toFixed(6)}, ${normalizedStart.lon.toFixed(6)}`,
         );
 
-        setText("navEndResolved", `${end.lat.toFixed(6)}, ${end.lon.toFixed(6)}`);
+        setText(
+            "navEndResolved",
+            `${normalizedEnd.lat.toFixed(6)}, ${normalizedEnd.lon.toFixed(6)}`,
+        );
 
         updateMarkers();
 
         return {
-            start,
-            end,
+            start: normalizedStart,
+            end: normalizedEnd,
         };
     }
 
     async function calculateRoute() {
         if (state.routing) {
-            return;
+            return false;
+        }
+
+        if (
+            !window.ProMap?.Routing ||
+            typeof window.ProMap.Routing.calculate !== "function"
+        ) {
+            showError("Routing modul nije učitan. Proveri promap-routing.js.");
+
+            return false;
         }
 
         state.routing = true;
@@ -858,7 +988,6 @@
 
         if (button) {
             button.disabled = true;
-
             button.textContent = "Računam…";
         }
 
@@ -895,7 +1024,7 @@
 
             console.log("ProMap Cargo route response:", data);
 
-            if (!Array.isArray(data.routes) || data.routes.length === 0) {
+            if (!data || !Array.isArray(data.routes) || data.routes.length === 0) {
                 throw new Error("Routing API je vratio odgovor bez rute.");
             }
 
@@ -915,12 +1044,16 @@
             drawRouteResponse(data);
 
             setNavigationStatus("READY", "ready");
+
+            return true;
         } catch (error) {
             console.error("Navigation routing error:", error);
 
             setNavigationStatus("ERROR", "danger");
 
             showError(error?.message || "Greška prilikom izračunavanja rute.");
+
+            return false;
         } finally {
             state.routing = false;
 
@@ -933,6 +1066,14 @@
                         : "Izračunaj auto rutu";
             }
         }
+    }
+
+    function getRouteDistance(route) {
+        return Number(route?.distance ?? route?.distanceMeters ?? 0);
+    }
+
+    function getRouteDuration(route) {
+        return Number(route?.duration ?? route?.durationSeconds ?? 0);
     }
 
     function drawRouteResponse(data) {
@@ -974,8 +1115,8 @@
 
             layer.bindPopup(
                 `<strong>Ruta ${index + 1}</strong><br>` +
-                `${formatDistance(route.distance)} · ` +
-                `${formatDuration(route.duration)}`,
+                `${formatDistance(getRouteDistance(route))} · ` +
+                `${formatDuration(getRouteDuration(route))}`,
             );
 
             layer.on("click", () => {
@@ -1002,11 +1143,8 @@
         }
 
         renderSummary(data);
-
         renderAlternatives(data);
-
         renderWarnings(data);
-
         renderManeuvers(data);
 
         fitRoute();
@@ -1044,9 +1182,9 @@
             return;
         }
 
-        setText("summaryDistance", formatDistance(route.distance));
+        setText("summaryDistance", formatDistance(getRouteDistance(route)));
 
-        setText("summaryDuration", formatDuration(route.duration));
+        setText("summaryDuration", formatDuration(getRouteDuration(route)));
 
         const eta =
             data.summary?.estimatedArrival ?? data.summary?.EstimatedArrival;
@@ -1145,8 +1283,8 @@
                             data-route-index="${index}"
                             style="cursor:pointer;">
                             <strong>Ruta ${index + 1}</strong>
-                            ${formatDistance(route.distance)}
-                            · ${formatDuration(route.duration)}
+                            ${formatDistance(getRouteDistance(route))}
+                            · ${formatDuration(getRouteDuration(route))}
                         </div>
                     `,
             )
@@ -1341,16 +1479,27 @@
 
         const points = [];
 
-        if (state.start) {
-            points.push([state.start.lat, state.start.lon]);
+        const start = normalizePoint(state.start);
+
+        const end = normalizePoint(state.end);
+
+        if (start) {
+            points.push([start.lat, start.lon]);
         }
 
-        if (state.end) {
-            points.push([state.end.lat, state.end.lon]);
+        if (end) {
+            points.push([end.lat, end.lon]);
         }
 
         for (const coordinate of state.routeCoordinates) {
-            points.push(coordinate);
+            if (
+                Array.isArray(coordinate) &&
+                coordinate.length >= 2 &&
+                Number.isFinite(Number(coordinate[0])) &&
+                Number.isFinite(Number(coordinate[1]))
+            ) {
+                points.push([Number(coordinate[0]), Number(coordinate[1])]);
+            }
         }
 
         if (points.length < 2) {
@@ -1362,11 +1511,56 @@
         });
     }
 
-    async function useCurrentLocation() {
+    function handleCurrentGpsPosition(rawPosition) {
+        const position = normalizeGpsPosition(rawPosition);
+
+        if (!position) {
+            setGpsStatus("GPS INVALID", "danger");
+
+            showError("GPS je vratio nevalidne koordinate.");
+
+            return null;
+        }
+
+        const point = {
+            lat: position.latitude,
+            lon: position.longitude,
+            label: "Moja trenutna lokacija",
+        };
+
+        state.start = point;
+
+        const input = $("navStart");
+
+        if (input) {
+            input.value = `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`;
+        }
+
+        setText(
+            "navStartResolved",
+            `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`,
+        );
+
+        updateStartMarker();
+
+        if (state.map) {
+            if (Number.isFinite(point.lat) && Number.isFinite(point.lon)) {
+                state.map.setView([point.lat, point.lon], 14);
+            }
+        }
+
+        setGpsStatus("GPS READY", "ready");
+
+        showError("");
+
+        return point;
+    }
+
+    function useCurrentLocation() {
         if (window.ProMap?.Gps) {
             const gps = window.ProMap.Gps;
 
-            if (gps.isSupported()) {
+            if (typeof gps.isSupported === "function" && gps.isSupported()) {
                 setGpsStatus("GPS REQUEST", "warning");
 
                 gps.start({
@@ -1377,36 +1571,7 @@
                     timeout: 15000,
 
                     onPosition: (position) => {
-                        const point = {
-                            lat: position.latitude,
-
-                            lon: position.longitude,
-
-                            label: "Moja trenutna lokacija",
-                        };
-
-                        state.start = point;
-
-                        const input = $("navStart");
-
-                        if (input) {
-                            input.value = `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`;
-                        }
-
-                        setText(
-                            "navStartResolved",
-                            `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`,
-                        );
-
-                        updateStartMarker();
-
-                        if (state.map) {
-                            state.map.setView([point.lat, point.lon], 14);
-                        }
-
-                        setGpsStatus("GPS READY", "ready");
-
-                        showError("");
+                        handleCurrentGpsPosition(position);
                     },
 
                     onError: (error) => {
@@ -1434,33 +1599,7 @@
 
         navigator.geolocation.getCurrentPosition(
             (position) => {
-                const point = {
-                    lat: position.coords.latitude,
-
-                    lon: position.coords.longitude,
-
-                    label: "Moja trenutna lokacija",
-                };
-
-                state.start = point;
-
-                $("navStart").value =
-                    `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`;
-
-                setText(
-                    "navStartResolved",
-                    `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`,
-                );
-
-                updateStartMarker();
-
-                if (state.map) {
-                    state.map.setView([point.lat, point.lon], 14);
-                }
-
-                setGpsStatus("GPS READY", "ready");
-
-                showError("");
+                handleCurrentGpsPosition(position);
             },
             (error) => {
                 console.error("Geolocation error:", error);
@@ -1481,15 +1620,29 @@
         );
     }
 
-    function startLiveNavigation() {
-        if (window.ProMap?.Gps) {
-            if (state.watchId !== null) {
+    async function startLiveNavigation() {
+        if (state.watchId !== null) {
+            return;
+        }
+
+        if (
+            !state.routeResponse ||
+            !Array.isArray(state.routeResponse.routes) ||
+            state.routeCoordinates.length < 2
+        ) {
+            setNavigationStatus("ROUTING", "warning");
+
+            const routeReady = await calculateRoute();
+
+            if (!routeReady) {
                 return;
             }
+        }
 
+        if (window.ProMap?.Gps) {
             const gps = window.ProMap.Gps;
 
-            if (!gps.isSupported()) {
+            if (typeof gps.isSupported === "function" && !gps.isSupported()) {
                 showError("Browser ne podržava geolokaciju.");
 
                 return;
@@ -1503,15 +1656,7 @@
                 timeout: 10000,
 
                 onPosition: (position) => {
-                    onLivePosition({
-                        coords: {
-                            latitude: position.latitude,
-                            longitude: position.longitude,
-                            accuracy: position.accuracy,
-                            speed: position.speed,
-                            heading: position.heading,
-                        },
-                    });
+                    onLivePosition(position);
                 },
 
                 onError: onLivePositionError,
@@ -1586,6 +1731,10 @@
 
         if (startButton) {
             startButton.style.display = "block";
+
+            startButton.disabled = !(
+                state.routeResponse && state.routeCoordinates.length >= 2
+            );
         }
 
         if (stopButton) {
@@ -1602,18 +1751,32 @@
     }
 
     function onLivePosition(position) {
-        const lat = position.coords.latitude;
+        const normalized = normalizeGpsPosition(position);
 
-        const lon = position.coords.longitude;
+        if (!normalized) {
+            setGpsStatus("GPS INVALID", "danger");
 
-        const accuracy = position.coords.accuracy;
+            return;
+        }
 
-        const speed = position.coords.speed;
+        const lat = normalized.latitude;
+
+        const lon = normalized.longitude;
+
+        const accuracy = normalized.accuracy;
+
+        const speed = normalized.speed;
 
         const point = {
             lat,
             lon,
         };
+
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+            console.error("ProMap Cargo: odbijena nevalidna GPS pozicija.", position);
+
+            return;
+        }
 
         setText(
             "liveSpeed",
@@ -1630,15 +1793,26 @@
         setText("livePosition", `${lat.toFixed(5)}, ${lon.toFixed(5)}`);
 
         if (state.map) {
+            const leafletPoint = [lat, lon];
+
+            if (
+                !Number.isFinite(leafletPoint[0]) ||
+                !Number.isFinite(leafletPoint[1])
+            ) {
+                console.error("ProMap Cargo: Leaflet position rejected.", leafletPoint);
+
+                return;
+            }
+
             if (!state.positionMarker) {
-                state.positionMarker = L.circleMarker([lat, lon], {
+                state.positionMarker = L.circleMarker(leafletPoint, {
                     radius: 8,
                     weight: 3,
                 })
                     .addTo(state.map)
                     .bindPopup("Trenutna GPS pozicija");
             } else {
-                state.positionMarker.setLatLng([lat, lon]);
+                state.positionMarker.setLatLng(leafletPoint);
             }
         }
 
@@ -1684,10 +1858,21 @@
         let minimum = Infinity;
 
         for (const coordinate of state.routeCoordinates) {
-            const routePoint = {
-                lat: coordinate[0],
+            if (!Array.isArray(coordinate) || coordinate.length < 2) {
+                continue;
+            }
 
-                lon: coordinate[1],
+            const routeLat = Number(coordinate[0]);
+
+            const routeLon = Number(coordinate[1]);
+
+            if (!Number.isFinite(routeLat) || !Number.isFinite(routeLon)) {
+                continue;
+            }
+
+            const routePoint = {
+                lat: routeLat,
+                lon: routeLon,
             };
 
             const distance = coordinateDistanceMeters(point, routePoint);
@@ -1861,10 +2046,12 @@
         $("fitRoute")?.addEventListener("click", fitRoute);
 
         $("centerGps")?.addEventListener("click", () => {
-            const position = window.ProMap?.Gps?.getPosition();
+            const position = window.ProMap?.Gps?.getPosition?.();
 
-            if (position && state.map) {
-                state.map.setView([position.latitude, position.longitude], 15);
+            const normalized = normalizeGpsPosition(position);
+
+            if (normalized && state.map) {
+                state.map.setView([normalized.latitude, normalized.longitude], 15);
             }
         });
 
@@ -1901,7 +2088,13 @@
         attachAutocomplete("navEnd", "navEndSuggestions", "navEndResolved");
 
         $("navStart")?.addEventListener("change", () => {
-            const point = parseCoordinates($("navStart").value);
+            const input = $("navStart");
+
+            if (!input) {
+                return;
+            }
+
+            const point = parseCoordinates(input.value);
 
             if (point) {
                 state.start = point;
@@ -1916,7 +2109,13 @@
         });
 
         $("navEnd")?.addEventListener("change", () => {
-            const point = parseCoordinates($("navEnd").value);
+            const input = $("navEnd");
+
+            if (!input) {
+                return;
+            }
+
+            const point = parseCoordinates(input.value);
 
             if (point) {
                 state.end = point;
@@ -1938,26 +2137,43 @@
 
         setProfile("truck");
 
-        state.start = DEFAULTS.start;
-        state.end = DEFAULTS.end;
+        state.start = normalizePoint(DEFAULTS.start);
 
-        setText(
-            "navStartResolved",
-            `${DEFAULTS.start.latitude.toFixed(6)}, ${DEFAULTS.start.longitude.toFixed(6)}`,
-        );
+        state.end = normalizePoint(DEFAULTS.end);
 
-        setText(
-            "navEndResolved",
-            `${DEFAULTS.end.latitude.toFixed(6)}, ${DEFAULTS.end.longitude.toFixed(6)}`,
-        );
+        if (state.start) {
+            setText(
+                "navStartResolved",
+                `${state.start.lat.toFixed(6)}, ${state.start.lon.toFixed(6)}`,
+            );
+        }
+
+        if (state.end) {
+            setText(
+                "navEndResolved",
+                `${state.end.lat.toFixed(6)}, ${state.end.lon.toFixed(6)}`,
+            );
+        }
+
+        const startInput = $("navStart");
+
+        if (startInput && !startInput.value.trim()) {
+            startInput.value = DEFAULTS.start.label;
+        }
+
+        const endInput = $("navEnd");
+
+        if (endInput && !endInput.value.trim()) {
+            endInput.value = DEFAULTS.end.label;
+        }
 
         updateMarkers();
 
-        if (state.map) {
+        if (state.map && state.start && state.end) {
             state.map.fitBounds(
                 [
-                    [DEFAULTS.start.latitude, DEFAULTS.start.longitude],
-                    [DEFAULTS.end.latitude, DEFAULTS.end.longitude],
+                    [state.start.lat, state.start.lon],
+                    [state.end.lat, state.end.lon],
                 ],
                 {
                     padding: [50, 50],

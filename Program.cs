@@ -24,14 +24,18 @@ builder.Services.AddSignalR();
 
 
 // ============================================================
-// DATABASE
+// DATABASE CONNECTION
 // ============================================================
 
 var connectionString =
-    builder.Configuration.GetConnectionString("Postgres")
-    ?? throw new InvalidOperationException(
+    builder.Configuration.GetConnectionString("Postgres");
+
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
         "ConnectionStrings:Postgres is not configured."
     );
+}
 
 
 // ============================================================
@@ -50,40 +54,44 @@ builder.Services.AddSingleton<NpgsqlDataSource>(_ =>
 
 
 // ============================================================
-// ENTITY FRAMEWORK
+// ENTITY FRAMEWORK CORE
 // ============================================================
 
-builder.Services.AddDbContext<ProMapCargoDbContext>(options =>
-{
-    options
-        .UseNpgsql(
-            connectionString,
-            npgsql =>
-            {
-                npgsql.UseNetTopologySuite();
-            }
-        )
-        .UseSnakeCaseNamingConvention();
-});
+builder.Services.AddDbContext<ProMapCargoDbContext>(
+    options =>
+    {
+        options
+            .UseNpgsql(
+                connectionString,
+                npgsqlOptions =>
+                {
+                    npgsqlOptions.UseNetTopologySuite();
+                }
+            )
+            .UseSnakeCaseNamingConvention();
+    }
+);
 
 
 // ============================================================
-// IDENTITY
+// ASP.NET CORE IDENTITY
 // ============================================================
 
 builder.Services
-    .AddIdentity<ApplicationUser, ApplicationRole>(options =>
-    {
-        options.User.RequireUniqueEmail = false;
+    .AddIdentity<ApplicationUser, ApplicationRole>(
+        options =>
+        {
+            options.User.RequireUniqueEmail = false;
 
-        options.Password.RequireDigit = true;
-        options.Password.RequireLowercase = true;
-        options.Password.RequireUppercase = true;
+            options.Password.RequireDigit = true;
+            options.Password.RequireLowercase = true;
+            options.Password.RequireUppercase = true;
+            options.Password.RequireNonAlphanumeric = false;
+            options.Password.RequiredLength = 8;
 
-        options.Password.RequireNonAlphanumeric = false;
-
-        options.Password.RequiredLength = 8;
-    })
+            options.SignIn.RequireConfirmedAccount = false;
+        }
+    )
     .AddEntityFrameworkStores<ProMapCargoDbContext>()
     .AddDefaultTokenProviders();
 
@@ -106,35 +114,77 @@ builder.Services.AddScoped<BusinessService>();
 
 
 // ============================================================
+// HTTP CLIENT FACTORY
+// ============================================================
+
+builder.Services.AddHttpClient();
+
+
+// ============================================================
 // GEOCODING
 // ============================================================
 
 builder.Services.AddHttpClient<
     IGeocodingService,
     NominatimGeocodingService
->(client =>
-{
-    client.Timeout =
-        TimeSpan.FromSeconds(15);
+>(
+    client =>
+    {
+        client.Timeout =
+            TimeSpan.FromSeconds(15);
 
-    client.DefaultRequestHeaders
-        .UserAgent
-        .ParseAdd("ProMapCargo/1.0");
-});
+        var userAgent =
+            builder.Configuration[
+                "Geocoding:UserAgent"
+            ]
+            ?? "ProMapCargo/1.0";
+
+        client.DefaultRequestHeaders
+            .UserAgent
+            .ParseAdd(userAgent);
+    }
+);
 
 
 // ============================================================
 // OSRM ROUTING
 // ============================================================
+//
+// OSRM je fallback routing engine.
+//
+// Primarni routing engine:
+//
+//     PostGIS / OSM graph
+//
+// Fallback:
+//
+//     OSRM
+//
+// IRoutingService mora biti kompatibilan sa
+// OsrmRoutingService i RoutingController.
+//
+// ============================================================
 
 builder.Services.AddHttpClient<
     IRoutingService,
     OsrmRoutingService
->(client =>
-{
-    client.Timeout =
-        TimeSpan.FromSeconds(30);
-});
+>(
+    client =>
+    {
+        client.Timeout =
+            TimeSpan.FromSeconds(30);
+
+        var userAgent =
+            builder.Configuration[
+                "Routing:UserAgent"
+            ]
+            ?? "ProMapCargo/1.0";
+
+        client.DefaultRequestHeaders
+            .UserAgent
+            .ParseAdd(userAgent);
+    }
+);
 
 
 // ============================================================
@@ -159,6 +209,30 @@ builder.Services.AddSingleton<
 
 // ============================================================
 // POSTGIS ROUTING
+// ============================================================
+//
+// PostGIS routing pipeline:
+//
+// RouteRequest
+//      |
+//      v
+// PostGisRoutingService
+//      |
+//      +--> EdgeSnapper
+//      |
+//      +--> PostGisRoutingRepository
+//      |
+//      +--> PostGisAStarRouter
+//      |
+//      +--> TruckEdgeEvaluator
+//      |
+//      +--> TurnRestrictionMatcher
+//      |
+//      +--> ManeuverBuilder
+//      |
+//      v
+// RouteResponse
+//
 // ============================================================
 
 builder.Services.AddScoped<
@@ -199,25 +273,34 @@ var corsOrigins =
     builder.Configuration
         .GetSection("Cors:Origins")
         .Get<string[]>()
-    ?? [];
+    ?? Array.Empty<string>();
 
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy(
-        "Frontend",
-        policy =>
-        {
-            if (corsOrigins.Length > 0)
+builder.Services.AddCors(
+    options =>
+    {
+        options.AddPolicy(
+            "Frontend",
+            policy =>
             {
+                if (corsOrigins.Length == 0)
+                {
+                    policy
+                        .AllowAnyOrigin()
+                        .AllowAnyHeader()
+                        .AllowAnyMethod();
+
+                    return;
+                }
+
                 policy
                     .WithOrigins(corsOrigins)
                     .AllowAnyHeader()
                     .AllowAnyMethod()
                     .AllowCredentials();
             }
-        }
-    );
-});
+        );
+    }
+);
 
 
 // ============================================================
@@ -357,7 +440,7 @@ static async Task InitializeDatabaseAsync(
         {
             app.Logger.LogWarning(
                 "PostgreSQL database is not available. " +
-                "Application will continue running without database initialization."
+                "Application will continue without database initialization."
             );
 
             return;
@@ -368,79 +451,42 @@ static async Task InitializeDatabaseAsync(
         // CREATE EF DATABASE OBJECTS
         // ====================================================
 
-        await db.Database.EnsureCreatedAsync();
+        try
+        {
+            await db.Database.EnsureCreatedAsync();
+
+            app.Logger.LogInformation(
+                "EF Core database schema verified."
+            );
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogError(
+                ex,
+                "EF Core database schema initialization failed."
+            );
+        }
 
 
         // ====================================================
         // SQL BOOTSTRAP
         // ====================================================
 
-        var sqlFiles = new[]
-        {
-            "03-routing-graph.sql",
-            "01-indexes.sql",
-            "04-operational-indexes.sql"
-        };
+        var sqlFiles =
+            new[]
+            {
+                "03-routing-graph.sql",
+                "01-indexes.sql",
+                "04-operational-indexes.sql"
+            };
 
         foreach (var fileName in sqlFiles)
         {
-            var path =
-                Path.Combine(
-                    app.Environment.ContentRootPath,
-                    "Sql",
-                    fileName
-                );
-
-            if (!File.Exists(path))
-            {
-                app.Logger.LogWarning(
-                    "SQL bootstrap file not found: {SqlFile}",
-                    path
-                );
-
-                continue;
-            }
-
-            var sql =
-                await File.ReadAllTextAsync(path);
-
-            if (string.IsNullOrWhiteSpace(sql))
-            {
-                app.Logger.LogWarning(
-                    "SQL bootstrap file is empty: {SqlFile}",
-                    path
-                );
-
-                continue;
-            }
-
-            try
-            {
-                await db.Database
-                    .ExecuteSqlRawAsync(sql);
-
-                app.Logger.LogInformation(
-                    "Executed SQL bootstrap file: {SqlFile}",
-                    fileName
-                );
-            }
-            catch (Exception ex)
-            {
-                app.Logger.LogError(
-                    ex,
-                    "Failed executing SQL bootstrap file: {SqlFile}",
-                    fileName
-                );
-
-                /*
-                 * VAŽNO:
-                 *
-                 * Jedan SQL bootstrap fajl ne sme
-                 * oboriti kompletan web server.
-                 *
-                 * Nastavljamo sa sledećim fajlom.
-                 */
-            }
+            await ExecuteSqlBootstrapFileAsync(
+                app,
+                db,
+                fileName
+            );
         }
 
 
@@ -448,11 +494,21 @@ static async Task InitializeDatabaseAsync(
         // DEMO / DEVELOPMENT SEED
         // ====================================================
 
-        await SeedAsync(
-            services,
-            app.Configuration,
-            app.Logger
-        );
+        try
+        {
+            await SeedAsync(
+                services,
+                app.Configuration,
+                app.Logger
+            );
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogError(
+                ex,
+                "Database seed failed. Application will continue running."
+            );
+        }
 
 
         app.Logger.LogInformation(
@@ -461,21 +517,86 @@ static async Task InitializeDatabaseAsync(
     }
     catch (Exception ex)
     {
-        /*
-         * VAŽNO:
-         *
-         * Database bootstrap NE SME da ugasi
-         * ASP.NET Core server.
-         *
-         * Web aplikacija mora da se podigne kako
-         * bismo mogli koristiti UI, /health i
-         * dobiti normalne dijagnostičke informacije.
-         */
-
         app.Logger.LogError(
             ex,
             "Database initialization failed. " +
             "Application will continue running."
+        );
+    }
+}
+
+
+// ============================================================
+// SQL BOOTSTRAP FILE EXECUTION
+// ============================================================
+
+static async Task ExecuteSqlBootstrapFileAsync(
+    WebApplication app,
+    ProMapCargoDbContext db,
+    string fileName
+)
+{
+    var path =
+        Path.Combine(
+            app.Environment.ContentRootPath,
+            "Sql",
+            fileName
+        );
+
+    if (!File.Exists(path))
+    {
+        app.Logger.LogWarning(
+            "SQL bootstrap file not found: {SqlFile}",
+            path
+        );
+
+        return;
+    }
+
+    string sql;
+
+    try
+    {
+        sql =
+            await File.ReadAllTextAsync(path);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(
+            ex,
+            "Failed reading SQL bootstrap file: {SqlFile}",
+            path
+        );
+
+        return;
+    }
+
+    if (string.IsNullOrWhiteSpace(sql))
+    {
+        app.Logger.LogWarning(
+            "SQL bootstrap file is empty: {SqlFile}",
+            path
+        );
+
+        return;
+    }
+
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(sql);
+
+        app.Logger.LogInformation(
+            "Executed SQL bootstrap file: {SqlFile}",
+            fileName
+        );
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(
+            ex,
+            "Failed executing SQL bootstrap file: {SqlFile}. " +
+            "Application will continue.",
+            fileName
         );
     }
 }
@@ -528,19 +649,22 @@ static async Task SeedAsync(
     // ROLES
     // ========================================================
 
-    var roles = new[]
-    {
-        "Administrator",
-        "Dispatcher",
-        "Moderator",
-        "Driver",
-        "FleetManager",
-        "Viewer"
-    };
+    var roles =
+        new[]
+        {
+            "Administrator",
+            "Dispatcher",
+            "Moderator",
+            "Driver",
+            "FleetManager",
+            "Viewer"
+        };
 
     foreach (var roleName in roles)
     {
-        if (await roleManager.RoleExistsAsync(roleName))
+        if (await roleManager.RoleExistsAsync(
+                roleName
+            ))
         {
             continue;
         }
@@ -577,7 +701,8 @@ static async Task SeedAsync(
         company =
             new Company
             {
-                Id = Guid.NewGuid(),
+                Id =
+                    Guid.NewGuid(),
 
                 Name =
                     "ProMap Cargo Demo",
@@ -608,7 +733,7 @@ static async Task SeedAsync(
 
 
     // ========================================================
-    // ADMIN USER
+    // ADMIN USER CONFIGURATION
     // ========================================================
 
     var adminEmail =
@@ -624,10 +749,14 @@ static async Task SeedAsync(
         ?? "Admin123!";
 
 
-    var admin =
-        await userManager
-            .FindByEmailAsync(adminEmail);
+    // ========================================================
+    // ADMIN USER
+    // ========================================================
 
+    var admin =
+        await userManager.FindByEmailAsync(
+            adminEmail
+        );
 
     if (admin is null)
     {
@@ -655,7 +784,6 @@ static async Task SeedAsync(
                 IsActive =
                     true
             };
-
 
         var createResult =
             await userManager.CreateAsync(
@@ -745,7 +873,6 @@ static async Task SeedAsync(
                     VehicleType.Tractor
             };
 
-
         var vehicle2 =
             new Vehicle
             {
@@ -767,7 +894,6 @@ static async Task SeedAsync(
                 Type =
                     VehicleType.Tractor
             };
-
 
         db.Vehicles.AddRange(
             vehicle1,
@@ -807,7 +933,6 @@ static async Task SeedAsync(
                     "RS-DEMO-001"
             };
 
-
         var driver2 =
             new Driver
             {
@@ -826,7 +951,6 @@ static async Task SeedAsync(
                 LicenseNumber =
                     "RS-DEMO-002"
             };
-
 
         db.Drivers.AddRange(
             driver1,
@@ -871,7 +995,6 @@ static async Task SeedAsync(
                 CargoWeightTons =
                     18
             };
-
 
         db.TransportOrders.Add(order);
 
@@ -961,7 +1084,6 @@ static async Task SeedAsync(
                     45
             };
 
-
         db.TransportStops.AddRange(
             loading,
             unloading
@@ -1025,7 +1147,6 @@ static async Task SeedAsync(
                     TripExecutionState.Assigned
             };
 
-
         db.Trips.Add(trip);
 
         await db.SaveChangesAsync();
@@ -1046,7 +1167,6 @@ static async Task SeedAsync(
 
         vehicle.CurrentDriverId =
             driver.Id;
-
 
         await db.SaveChangesAsync();
     }
@@ -1082,10 +1202,10 @@ static async Task SeedAsync(
                         44.8178
                     )
                     {
-                        SRID = 4326
+                        SRID =
+                            4326
                     }
             };
-
 
         var weightRestriction =
             new RoadRestriction
@@ -1111,10 +1231,10 @@ static async Task SeedAsync(
                         44.8040
                     )
                     {
-                        SRID = 4326
+                        SRID =
+                            4326
                     }
             };
-
 
         db.RoadRestrictions.AddRange(
             heightRestriction,
@@ -1124,6 +1244,10 @@ static async Task SeedAsync(
         await db.SaveChangesAsync();
     }
 
+
+    // ========================================================
+    // SEED COMPLETE
+    // ========================================================
 
     logger.LogInformation(
         "Database initialization and demo seed completed for company {CompanyId}.",
