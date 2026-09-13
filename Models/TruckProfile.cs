@@ -4,49 +4,44 @@ namespace ProMapCargo.Api.Models;
 
 public sealed class TruckProfile
 {
-    public decimal GrossWeightTons { get; init; }
-    public decimal HeightMeters { get; init; }
-    public decimal WidthMeters { get; init; }
-    public decimal LengthMeters { get; init; }
-    public decimal? AxleLoadTons { get; init; }
-    public int Axles { get; init; } = 5;
-    public bool IsHgv { get; init; } = true;
-    public bool Commercial { get; init; } = true;
-    public bool Hazmat { get; init; }
-    public string? Goods { get; init; }
-    public string? AdrClass { get; init; }
-    public string VehicleClass { get; init; } = "HeavyGoods";
-
-    [JsonPropertyName("maxSpeedKmh")]
-    public decimal MaxSpeedKmh { get; init; } = 90;
-
     [JsonPropertyName("grossWeightT")]
-    public decimal GrossWeightT
-    {
-        init => GrossWeightTons = value;
-    }
+    public decimal GrossWeightTons { get; init; }
 
     [JsonPropertyName("heightM")]
-    public decimal HeightM
-    {
-        init => HeightMeters = value;
-    }
+    public decimal HeightMeters { get; init; }
 
     [JsonPropertyName("widthM")]
-    public decimal WidthM
-    {
-        init => WidthMeters = value;
-    }
+    public decimal WidthMeters { get; init; }
 
     [JsonPropertyName("lengthM")]
-    public decimal LengthM
-    {
-        init => LengthMeters = value;
-    }
+    public decimal LengthMeters { get; init; }
 
     [JsonPropertyName("axleLoadT")]
-    public decimal AxleLoadT
-    {
-        init => AxleLoadTons = value;
-    }
+    public decimal? AxleLoadTons { get; init; }
+
+    [JsonPropertyName("axles")]
+    public int Axles { get; init; } = 5;
+
+    [JsonPropertyName("isHgv")]
+    public bool IsHgv { get; init; } = true;
+
+    [JsonPropertyName("commercial")]
+    public bool Commercial { get; init; } = true;
+
+    [JsonPropertyName("hazmat")]
+    public bool Hazmat { get; init; }
+
+    [JsonPropertyName("goods")]
+    public string? Goods { get; init; }
+
+    [JsonPropertyName("adrClass")]
+    public string? AdrClass { get; init; }
+
+    [JsonPropertyName("vehicleClass")]
+    public string VehicleClass { get; init; } =
+        "HeavyGoods";
+
+    [JsonPropertyName("maxSpeedKmh")]
+    public decimal MaxSpeedKmh { get; init; } =
+        90;
 }

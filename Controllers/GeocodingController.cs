@@ -4,43 +4,27 @@ using ProMapCargo.Api.Services;
 namespace ProMapCargo.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
-public sealed class GeocodingController : ControllerBase
+[Route("api/geocode")]
+public sealed class GeocodingController(
+    IGeocodingService service
+) : ControllerBase
 {
-    private readonly IGeocodingService _service;
-
-    public GeocodingController(IGeocodingService service)
-    {
-        _service = service;
-    }
-
     [HttpGet]
-    public async Task<IActionResult> Search(
-        [FromQuery] string? q,
-        [FromQuery(Name = "query")] string? query,
-        [FromQuery] int limit = 6,
-        CancellationToken ct = default)
+    public async Task<IActionResult> Search([FromQuery] string q, [FromQuery] int limit = 5, CancellationToken ct = default)
     {
-        var text = !string.IsNullOrWhiteSpace(q) ? q : query;
-
-        if (string.IsNullOrWhiteSpace(text) || text.Trim().Length < 2)
+        if (string.IsNullOrWhiteSpace(q) || q.Trim().Length < 2)
         {
-            return BadRequest(new
-            {
-                message = "Parametar q/query mora imati najmanje 2 karaktera."
-            });
+            return BadRequest(
+                new
+                {
+                    code = "InvalidQuery",
+                    message = "Parametar q mora imati najmanje 2 karaktera."
+                }
+            );
         }
 
-        var results = await _service.SearchAsync(
-            text.Trim(),
-            Math.Clamp(limit, 1, 10),
-            ct);
+        var result = await service.SearchAsync(q.Trim(), Math.Clamp(limit, 1, 10), ct);
 
-        return Ok(new
-        {
-            query = text.Trim(),
-            count = results.Count,
-            results
-        });
+        return Ok(result);
     }
 }

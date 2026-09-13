@@ -1,47 +1,105 @@
-using ProMapCargo.Api.Models;
 using System.Globalization;
+using System.Net.Http.Json;
 using System.Text.Json;
+using ProMapCargo.Api.Models;
+
 namespace ProMapCargo.Api.Services;
 
-public sealed class OsrmRoutingService(HttpClient http, IConfiguration config) : IRoutingService
+public sealed class OsrmRoutingService(
+    HttpClient http,
+    IConfiguration config
+) : IRoutingService
 {
-    public async Task<OsrmResponse> RouteAsync(RouteRequest request, CancellationToken ct)
+    public async Task<OsrmResponse> RouteAsync(
+        RouteRequest request,
+        CancellationToken ct)
     {
-        var profile = request.Profile switch
-        {
-            "cycling" => "bike",
-            "walking" => "foot",
-            _ => "driving"
-        }
-        ;
-        var baseUrl = config["Routing:OsrmBaseUrl"]?.TrimEnd('/');
+        var profile =
+            request.Profile?.Trim().ToLowerInvariant()
+            switch
+            {
+                "cycling" => "bike",
+                "walking" => "foot",
+                _ => "driving"
+            };
+
+        var baseUrl =
+            config["Routing:OsrmBaseUrl"];
+
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
-            return new OsrmResponse
-            {
-                Code = "NoOsrmEndpoint"
-            }
-            ;
+            throw new InvalidOperationException(
+                "Routing:OsrmBaseUrl nije konfigurisan."
+            );
         }
-        var coords = string.Join(";", FormatCoordinate(request.Start), FormatCoordinate(request.Target));
-        var url = $"{baseUrl}/route/v1/{profile}/{coords}?overview=full&geometries=geojson&steps=true&alternatives=true";
-        using var response = await http.GetAsync(url, ct);
+
+        baseUrl =
+            baseUrl.TrimEnd('/');
+
+        var target =
+            request.Target;
+
+        var startLon =
+            request.Start.Lon.ToString(
+                CultureInfo.InvariantCulture
+            );
+
+        var startLat =
+            request.Start.Lat.ToString(
+                CultureInfo.InvariantCulture
+            );
+
+        var endLon =
+            target.Lon.ToString(
+                CultureInfo.InvariantCulture
+            );
+
+        var endLat =
+            target.Lat.ToString(
+                CultureInfo.InvariantCulture
+            );
+
+        var coordinates =
+            $"{startLon},{startLat};{endLon},{endLat}";
+
+        var url =
+            $"{baseUrl}/route/v1/{profile}/{coordinates}" +
+            "?overview=full" +
+            "&geometries=geojson" +
+            "&steps=true" +
+            "&alternatives=true";
+
+        using var response =
+            await http.GetAsync(
+                url,
+                ct
+            );
+
+        var content =
+            await response.Content.ReadAsStringAsync(
+                ct
+            );
+
         if (!response.IsSuccessStatusCode)
         {
-            return new OsrmResponse
-            {
-                Code = $"Http{(int)response.StatusCode}"
-            }
-            ;
+            throw new HttpRequestException(
+                $"OSRM HTTP {(int)response.StatusCode}: {content}"
+            );
         }
-        return await response.Content.ReadFromJsonAsync<OsrmResponse>(
-        new JsonSerializerOptions(JsonSerializerDefaults.Web), ct)
-        ?? new OsrmResponse
+
+        var result = JsonSerializer.Deserialize<OsrmResponse>(content,
+                new JsonSerializerOptions(
+                    JsonSerializerDefaults.Web
+                )
+            );
+
+        if (result is null)
         {
-            Code = "InvalidResponse"
+            throw new InvalidOperationException(
+                "OSRM je vratio prazan ili nevalidan odgovor."
+            );
         }
-        ;
+
+        return result;
     }
-    private static string FormatCoordinate(GeoPoint point) =>
-    $"{point.Lon.ToString(CultureInfo.InvariantCulture)},{point.Lat.ToString(CultureInfo.InvariantCulture)}";
 }

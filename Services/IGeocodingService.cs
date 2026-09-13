@@ -4,8 +4,5 @@ namespace ProMapCargo.Api.Services;
 
 public interface IGeocodingService
 {
-    Task<IReadOnlyList<GeocodingResult>> SearchAsync(
-        string query,
-        int limit = 6,
-        CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<object>> SearchAsync(string query, int limit, CancellationToken ct);
 }
