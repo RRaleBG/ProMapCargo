@@ -1,23 +1,62 @@
-name: build
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: promap-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: promapcargo
+      POSTGRES_USER: promap
+      POSTGRES_PASSWORD: promap_dev_change_me
+    ports:
+      - "5432:5432"
+    volumes:
+      - promap_pgdata:/var/lib/postgresql/data
+      - ./osm:/osm
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U promap -d promapcargo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
-on:
-  push:
-  pull_request:
+  # Optional local OSRM engine.
+  # It is intentionally not started by the default profile because the
+  # repository does not contain the large Serbia .osrm dataset.
+  osrm:
+    image: osrm/osrm-backend:latest
+    container_name: promap-osrm
+    restart: unless-stopped
+    profiles: ["local-osrm"]
+    command:
+      - osrm-routed
+      - --algorithm
+      - mld
+      - /data/serbia-latest.osrm
+    ports:
+      - "5001:5000"
+    volumes:
+      - ./osm:/data:ro
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: promap-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=promapcargo;Username=promap;Password=promap_dev_change_me
+      Routing__OsrmBaseUrl: "http://osrm:5000"
+      Routing__OsrmFallbackBaseUrl: "https://router.project-osrm.org"
+      Seed__Enabled: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./osm:/app/osm:ro
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 9.0.x
-
-      - name: Restore
-        run: dotnet restore ProMapCargo.sln
-
-      - name: Build
-        run: dotnet build ProMapCargo.sln --configuration Release --no-restore
+volumes:
+  promap_pgdata:
