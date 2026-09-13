@@ -338,6 +338,13 @@ app.UseAuthentication();
 
 app.UseAuthorization();
 
+app.MapGet("/api/routing/test", () => Results.Ok(new
+    {
+        status = "ok",
+        controller = "routing",
+        timestamp = DateTimeOffset.UtcNow
+    }));
+
 
 // ============================================================
 // API CONTROLLERS
@@ -350,9 +357,7 @@ app.MapControllers();
 // SIGNALR
 // ============================================================
 
-app.MapHub<NavigationHub>(
-    "/hubs/navigation"
-);
+app.MapHub<NavigationHub>(    "/hubs/navigation");
 
 
 // ============================================================
@@ -384,9 +389,7 @@ app.MapGet(
 // FALLBACK
 // ============================================================
 
-app.MapFallbackToPage(
-    "/Index"
-);
+app.MapFallbackToPage(    "/Index");
 
 
 // ============================================================
@@ -407,9 +410,7 @@ await app.RunAsync();
 // DATABASE INITIALIZATION
 // ============================================================
 
-static async Task InitializeDatabaseAsync(
-    WebApplication app
-)
+static async Task InitializeDatabaseAsync(WebApplication app)
 {
     try
     {
@@ -530,11 +531,7 @@ static async Task InitializeDatabaseAsync(
 // SQL BOOTSTRAP FILE EXECUTION
 // ============================================================
 
-static async Task ExecuteSqlBootstrapFileAsync(
-    WebApplication app,
-    ProMapCargoDbContext db,
-    string fileName
-)
+static async Task ExecuteSqlBootstrapFileAsync(WebApplication app, ProMapCargoDbContext db, string fileName)
 {
     var path =
         Path.Combine(
@@ -606,12 +603,7 @@ static async Task ExecuteSqlBootstrapFileAsync(
 // DATABASE SEED
 // ============================================================
 
-static async Task SeedAsync(
-    IServiceProvider services,
-    IConfiguration configuration,
-    ILogger logger
-)
-{
+static async Task SeedAsync(    IServiceProvider services,    IConfiguration configuration,    ILogger logger){
     // ========================================================
     // SEED ENABLED?
     // ========================================================
@@ -1260,10 +1252,7 @@ static async Task SeedAsync(
 // IDENTITY RESULT CHECK
 // ============================================================
 
-static void EnsureIdentitySuccess(
-    IdentityResult result,
-    string operation
-)
+static void EnsureIdentitySuccess(    IdentityResult result,    string operation)
 {
     if (result.Succeeded)
     {
