@@ -66,17 +66,11 @@ public sealed class MapTilesController : ControllerBase
         var normalizedLayer =
             layer.ToLowerInvariant();
 
-        var cacheKey =
-            $"promap-map:{normalizedLayer}:{zoom}:{x}:{y}";
+        var cacheKey = $"promap-map:{normalizedLayer}:{zoom}:{x}:{y}";
 
-        var cacheSeconds =
-            GetCacheSeconds(normalizedLayer);
+        var cacheSeconds = GetCacheSeconds(normalizedLayer);
 
-        if (_cache.TryGetValue(
-                cacheKey,
-                out MapTileCacheEntry? cached) &&
-            cached is not null &&
-            cached.Bytes.Length > 0)
+        if (_cache.TryGetValue(cacheKey, out MapTileCacheEntry? cached) && cached is not null && cached.Bytes.Length > 0)
         {
             SetCacheHeaders(cacheSeconds);
 
@@ -85,20 +79,8 @@ public sealed class MapTilesController : ControllerBase
                 cached.ContentType);
         }
 
-        var providerY =
-            normalizedLayer is
-                "flow" or
-                "incidents" or
-                "dark"
-                ? (int)(tileCount - 1 - y)
-                : y;
-
-        var targetUrl =
-            BuildTargetUrl(
-                normalizedLayer,
-                zoom,
-                x,
-                providerY);
+        var providerY = normalizedLayer is "flow" or "incidents" or "dark" ? (int)(tileCount - 1 - y) : y;
+        var targetUrl = BuildTargetUrl(normalizedLayer, zoom, x, providerY);
 
         if (targetUrl is null)
         {
