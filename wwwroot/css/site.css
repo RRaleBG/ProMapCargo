@@ -67,7 +67,7 @@ body
     background: radial-gradient( circle at 15% 20%, rgba(16, 185, 129, 0.075), transparent 28% ), radial-gradient( circle at 82% 15%, rgba(45, 212, 191, 0.045), transparent 25% ), linear-gradient( 135deg, #010d0b 0%, #021512 42%, #031d18 100% );
     color: var(--pm-text);
     font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    font-size: 14px;
+    font-size: 16px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;

@@ -1,8 +1,7 @@
-using System.Globalization;
-using Microsoft.EntityFrameworkCore;
 using NetTopologySuite.Geometries;
 using OsmSharp;
 using OsmSharp.Streams;
+using System.Globalization;
 
 namespace ProMapCargo.OsmImporter;
 
@@ -98,26 +97,32 @@ public sealed class OsmRestrictionImporter(ImportDbContext db)
 
     private static bool IsBan(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value)) return false;
-        return value.Equals("no", StringComparison.OrdinalIgnoreCase)
-        || value.Equals("agricultural", StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+        return value.Equals("no", StringComparison.OrdinalIgnoreCase) || value.Equals("agricultural", StringComparison.OrdinalIgnoreCase);
     }
 
     private static decimal? ParseMeters(string? raw)
     {
-        if (string.IsNullOrWhiteSpace(raw)) return null;
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
         raw = raw.Trim().Replace(',', '.');
         var numeric = new string(raw.TakeWhile(c => char.IsDigit(c) || c == '.' || c == '-').ToArray());
+
         if (!decimal.TryParse(numeric, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
             return null;
+
         if (raw.Contains("ft", StringComparison.OrdinalIgnoreCase))
             value *= 0.3048m;
+
         return value;
     }
 
     private static decimal? ParseTons(string? raw)
     {
-        if (string.IsNullOrWhiteSpace(raw)) return null;
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
         raw = raw.Trim().Replace(',', '.');
         var numeric = new string(raw.TakeWhile(c => char.IsDigit(c) || c == '.' || c == '-').ToArray());
         if (!decimal.TryParse(numeric, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))

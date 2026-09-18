@@ -1,482 +1,3994 @@
-@page "/compliance"   
+@page
 @{
-  ViewData["Title"] = "Compliance · ProMap Cargo";
+    ViewData["Title"] = "Compliance · ProMap Cargo";
 }
 
-<div id="app" style="display:none"></div>
-<div class="pm-page" data-module="compliance">
-  <header class="pm-header">
+<div class="pm-page pm-compliance-page" data-module="compliance">
+
+    <header class="compliance-header">
+        <div class="compliance-heading">
+            <div class="compliance-kicker">FLEET CONTROL · DOCUMENTS · MAINTENANCE</div>
+            <h1>Vehicle Compliance</h1>
+            <p>
+                Centralni pregled dokumentacije, rokova, tehničke ispravnosti,
+                servisa, popravki i upozorenja za svako vozilo.
+            </p>
+        </div>
+
+        <div class="compliance-header-actions">
+            <button type="button" class="compliance-btn secondary" id="refreshCompliance">
+                <span>↻</span>
+                Osveži
+            </button>
+
+            <button type="button" class="compliance-btn primary" id="addDocumentBtn">
+                <span>＋</span>
+                Novi dokument
+            </button>
+        </div>
+    </header>
+
+    <section class="fleet-selector-card">
+
+        <div class="fleet-selector-main">
+
+            <div class="fleet-selector-icon">
+                🚛
+            </div>
+
+            <div class="fleet-selector-info">
+                <span class="fleet-selector-label">Izabrano vozilo</span>
+
+                <div class="fleet-selector-row">
+                    <select id="vehicleSelect" class="compliance-select vehicle-select">
+                        <option value="BG-TR-001">BG-TR-001 · Mercedes-Benz Actros 1853</option>
+                        <option value="BG-TR-002">BG-TR-002 · Volvo FH 500</option>
+                        <option value="BG-TR-003">BG-TR-003 · Scania R 450</option>
+                        <option value="BG-TR-004">BG-TR-004 · MAN TGX 18.510</option>
+                        <option value="BG-TR-005">BG-TR-005 · DAF XF 480</option>
+                        <option value="BG-TR-006">BG-TR-006 · Mercedes-Benz Actros 1848</option>
+                        <option value="BG-TR-007">BG-TR-007 · Volvo FH 460</option>
+                        <option value="BG-TR-008">BG-TR-008 · Scania R 500</option>
+                    </select>
+
+                    <span class="vehicle-status-chip good" id="vehicleStatus">
+                        COMPLIANT
+                    </span>
+                </div>
+
+                <div class="fleet-selector-meta" id="vehicleMeta">
+                    BG · N3 · 40t · Euro 6 · 5 osovina · međunarodni transport
+                </div>
+            </div>
+
+        </div>
+
+        <div class="vehicle-quick-info">
+            <div>
+                <span>Reg. oznaka</span>
+                <strong id="vehicleRegistration">BG-TR-001</strong>
+            </div>
+
+            <div>
+                <span>VIN</span>
+                <strong id="vehicleVin">WDB9634031L123456</strong>
+            </div>
+
+            <div>
+                <span>Vozač</span>
+                <strong id="vehicleDriver">Marko Petrović</strong>
+            </div>
+
+            <div>
+                <span>Poslednja kontrola</span>
+                <strong id="vehicleLastCheck">12.09.2026.</strong>
+            </div>
+        </div>
+
+    </section>
+
+    <section class="compliance-health">
+
+        <div class="health-main">
+
+            <div class="health-ring">
+                <svg viewBox="0 0 120 120">
+                    <circle class="health-ring-bg" cx="60" cy="60" r="48"></circle>
+                    <circle class="health-ring-progress" id="healthRing" cx="60" cy="60" r="48"></circle>
+                </svg>
+
+                <div class="health-ring-value">
+                    <strong id="complianceScore">91%</strong>
+                    <span>compliance</span>
+                </div>
+            </div>
+
+            <div class="health-copy">
+                <span class="health-label">STATUS VOZILA</span>
+                <h2 id="healthTitle">Dokumentacija je uglavnom uredna</h2>
+                <p id="healthDescription">
+                    Vozilo može da bude u operativnom statusu. Postoje dokumenti
+                    kojima se približava rok kontrole ili isteka.
+                </p>
+
+                <div class="health-badges">
+                    <span class="health-badge good" id="healthGood">12 važećih</span>
+                    <span class="health-badge warning" id="healthWarning">2 uskoro ističu</span>
+                    <span class="health-badge danger" id="healthDanger">0 isteklih</span>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="health-stats">
+
+            <div class="health-stat">
+                <span class="health-stat-label">Dokumenti</span>
+                <strong id="statDocuments">14</strong>
+                <small>evidentirano</small>
+            </div>
+
+            <div class="health-stat">
+                <span class="health-stat-label">Alerti</span>
+                <strong id="statAlerts">2</strong>
+                <small>otvorena</small>
+            </div>
+
+            <div class="health-stat">
+                <span class="health-stat-label">Servis</span>
+                <strong id="statService">8.420 km</strong>
+                <small>do sledećeg</small>
+            </div>
+
+            <div class="health-stat">
+                <span class="health-stat-label">Greške</span>
+                <strong id="statFaults">1</strong>
+                <small>otvorena</small>
+            </div>
+
+        </div>
+
+    </section>
+
+    <section class="compliance-toolbar">
+
+        <div class="compliance-tabs" role="tablist">
+
+            <button class="compliance-tab active" data-tab="documents">
+                Dokumenti
+                <span id="documentsCount">14</span>
+            </button>
+
+            <button class="compliance-tab" data-tab="maintenance">
+                Održavanje
+                <span>3</span>
+            </button>
+
+            <button class="compliance-tab" data-tab="repairs">
+                Popravke
+                <span>4</span>
+            </button>
+
+            <button class="compliance-tab" data-tab="faults">
+                Greške
+                <span>1</span>
+            </button>
+
+            <button class="compliance-tab" data-tab="notes">
+                Napomene
+                <span>5</span>
+            </button>
+
+            <button class="compliance-tab" data-tab="history">
+                Istorija
+            </button>
+
+        </div>
+
+        <div class="compliance-filters">
+
+            <div class="search-box">
+                <span>⌕</span>
+                <input
+                    type="search"
+                    id="documentSearch"
+                    placeholder="Pretraži dokumente..."
+                    autocomplete="off">
+            </div>
+
+            <select id="statusFilter" class="compliance-select">
+                <option value="all">Svi statusi</option>
+                <option value="valid">Važeći</option>
+                <option value="warning">Uskoro ističe</option>
+                <option value="expired">Istekao</option>
+                <option value="missing">Nedostaje</option>
+                <option value="not-applicable">Nije primenljivo</option>
+            </select>
+
+            <select id="categoryFilter" class="compliance-select">
+                <option value="all">Sve kategorije</option>
+                <option value="vehicle">Vozilo</option>
+                <option value="transport">Transport</option>
+                <option value="safety">Bezbednost</option>
+                <option value="maintenance">Održavanje</option>
+            </select>
+
+        </div>
+
+    </section>
+
+    <section class="compliance-tab-panel active" data-panel="documents">
+
+        <div class="document-layout">
+
+            <div class="document-main">
+
+                <div class="section-title-row">
+                    <div>
+                        <span class="section-kicker">DOCUMENT REGISTER</span>
+                        <h2>Dokumentacija vozila</h2>
+                    </div>
+
+                    <button type="button" class="small-action" id="uploadDocumentBtn">
+                        ＋ Dodaj dokument
+                    </button>
+                </div>
+
+                <div class="document-grid" id="documentGrid">
+
+                    <article class="document-card"
+                             data-document-id="registration"
+                             data-category="vehicle"
+                             data-status="valid"
+                             data-search="saobracajna registracija saobraćajna dozvola">
+
+                        <div class="document-card-top">
+                            <div class="document-icon green">▣</div>
+
+                            <div class="document-status valid">
+                                VAŽEĆE
+                            </div>
+                        </div>
+
+                        <div class="document-card-content">
+
+                            <span class="document-category">VOZILO</span>
+
+                            <h3>Saobraćajna dozvola / registracija</h3>
+
+                            <p>
+                                Saobraćajna dozvola i rok registracije vozila.
+                            </p>
+
+                            <div class="document-number">
+                                <span>Broj dokumenta</span>
+                                <strong>BG-TR-001-2026</strong>
+                            </div>
+
+                            <div class="document-dates">
+
+                                <div>
+                                    <span>Izdata</span>
+                                    <strong>15.03.2026.</strong>
+                                </div>
+
+                                <div>
+                                    <span>Ističe</span>
+                                    <strong>15.03.2027.</strong>
+                                </div>
+
+                                <div>
+                                    <span>Preostalo</span>
+                                    <strong class="date-good">178 dana</strong>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="document-card-footer">
+                            <button class="document-action view-document"
+                                    data-id="registration">
+                                Uvid
+                            </button>
+
+                            <button class="document-action edit-document"
+                                    data-id="registration">
+                                Izmena
+                            </button>
+
+                            <button class="document-action file-document"
+                                    data-id="registration">
+                                Fajl
+                            </button>
+                        </div>
+
+                    </article>
+
+                    <article class="document-card"
+                             data-document-id="insurance"
+                             data-category="vehicle"
+                             data-status="valid"
+                             data-search="osiguranje polisa obavezno osiguranje">
+
+                        <div class="document-card-top">
+                            <div class="document-icon blue">◆</div>
+
+                            <div class="document-status valid">
+                                VAŽEĆE
+                            </div>
+                        </div>
+
+                        <div class="document-card-content">
+
+                            <span class="document-category">VOZILO</span>
+
+                            <h3>Obavezno osiguranje</h3>
+
+                            <p>
+                                Polisa osiguranja vozila.
+                            </p>
+
+                            <div class="document-number">
+                                <span>Polisa</span>
+                                <strong>POL-2026-884201</strong>
+                            </div>
+
+                            <div class="document-dates">
+
+                                <div>
+                                    <span>Izdata</span>
+                                    <strong>15.03.2026.</strong>
+                                </div>
+
+                                <div>
+                                    <span>Ističe</span>
+                                    <strong>15.03.2027.</strong>
+                                </div>
+
+                                <div>
+                                    <span>Preostalo</span>
+                                    <strong class="date-good">178 dana</strong>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="document-card-footer">
+                            <button class="document-action view-document" data-id="insurance">
+                                Uvid
+                            </button>
+
+                            <button class="document-action edit-document" data-id="insurance">
+                                Izmena
+                            </button>
+
+                            <button class="document-action file-document" data-id="insurance">
+                                Fajl
+                            </button>
+                        </div>
+
+                    </article>
+
+                    <article class="document-card"
+                             data-document-id="euro6"
+                             data-category="vehicle"
+                             data-status="valid"
+                             data-search="euro 6 bela potvrda emisija motor">
+
+                        <div class="document-card-top">
+                            <div class="document-icon cyan">E6</div>
+
+                            <div class="document-status valid">
+                                VAŽEĆE
+                            </div>
+                        </div>
+
+                        <div class="document-card-content">
+
+                            <span class="document-category">EKO / HOMOLOGACIJA</span>
+
+                            <h3>Euro 6 potvrda — kamion</h3>
+
+                            <p>
+                                Bela potvrda za vučno vozilo / potvrda o emisijskoj kategoriji.
+                            </p>
+
+                            <div class="document-number">
+                                <span>Broj potvrde</span>
+                                <strong>EU6-BG-2026-001</strong>
+                            </div>
+
+                            <div class="document-dates">
+
+                                <div>
+                                    <span>Tip</span>
+                                    <strong>Bela potvrda</strong>
+                                </div>
+
+                                <div>
+                                    <span>Euro norma</span>
+                                    <strong>EURO 6</strong>
+                                </div>
+
+                                <div>
+                                    <span>Status</span>
+                                    <strong class="date-good">Validno</strong>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="document-card-footer">
+                            <button class="document-action view-document" data-id="euro6">
+                                Uvid
+                            </button>
+
+                            <button class="document-action edit-document" data-id="euro6">
+                                Izmena
+                            </button>
+
+                            <button class="document-action file-document" data-id="euro6">
+                                Fajl
+                            </button>
+                        </div>
+
+                    </article>
+
+                    <article class="document-card"
+                             data-document-id="trailer-euro6"
+                             data-category="vehicle"
+                             data-status="valid"
+                             data-search="euro 6 žuta potvrda prikolica poluprikolica">
+
+                        <div class="document-card-top">
+                            <div class="document-icon yellow">E6</div>
+
+                            <div class="document-status valid">
+                                VAŽEĆE
+                            </div>
+                        </div>
+
+                        <div class="document-card-content">
+
+                            <span class="document-category">PRIKOLICA</span>
+
+                            <h3>Euro potvrda — prikolica</h3>
+
+                            <p>
+                                Evidencija potvrde za priključno vozilo / poluprikolicu.
+                            </p>
+
+                            <div class="document-number">
+                                <span>Broj potvrde</span>
+                                <strong>EU6-Y-2026-041</strong>
+                            </div>
+
+                            <div class="document-dates">
+
+                                <div>
+                                    <span>Tip</span>
+                                    <strong>Žuta potvrda</strong>
+                                </div>
+
+                                <div>
+                                    <span>Prikolica</span>
+                                    <strong>BG-PR-041</strong>
+                                </div>
+
+                                <div>
+                                    <span>Status</span>
+                                    <strong class="date-good">Validno</strong>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="document-card-footer">
+                            <button class="document-action view-document" data-id="trailer-euro6">
+                                Uvid
+                            </button>
+
+                            <button class="document-action edit-document" data-id="trailer-euro6">
+                                Izmena
+                            </button>
+
+                            <button class="document-action file-document" data-id="trailer-euro6">
+                                Fajl
+                            </button>
+                        </div>
+
+                    </article>
+
+                    <article class="document-card"
+                             data-document-id="technical"
+                             data-category="vehicle"
+                             data-status="warning"
+                             data-search="tehnički pregled šestomesečni 6 meseci">
+
+                        <div class="document-card-top">
+                            <div class="document-icon orange">✓</div>
+
+                            <div class="document-status warning">
+                                USKORO ISTIČE
+                            </div>
+                        </div>
+
+                        <div class="document-card-content">
+
+                            <span class="document-category">TEHNIČKI PREGLED</span>
+
+                            <h3>Šestomesečni tehnički pregled</h3>
+
+                            <p>
+                                Redovni periodični tehnički pregled vozila.
+                            </p>
+
+                            <div class="document-number">
+                                <span>Zapisnik</span>
+                                <strong>TP-2026-09112</strong>
+                            </div>
+
+                            <div class="document-dates">
+
+                                <div>
+                                    <span>Poslednji</span>
+                                    <strong>17.03.2026.</strong>
+                                </div>
+
+                                <div>
+                                    <span>Sledeći</span>
+                                    <strong>17.09.2026.</strong>
+                                </div>
+
+                                <div>
+                                    <span>Preostalo</span>
+                                    <strong class="date-warning">-2 dana</strong>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="document-card-footer">
+                            <button class="document-action view-document" data-id="technical">
+                                Uvid
+                            </button>
+
+                            <button class="document-action edit-document" data-id="technical">
+                                Izmena
+                            </button>
+
+                            <button class="document-action file-document" data-id="technical">
+                                Fajl
+                            </button>
+                        </div>
+
+                    </article>
+
+                    <article class="document-card"
+                             data-document-id="tir"
+                             data-category="transport"
+                             data-status="valid"
+                             data-search="tir sertifikat tir carnet međunarodni transport">
+
+                        <div class="document-card-top">
+                            <div class="document-icon purple">TIR</div>
+
+                            <div class="document-status valid">
+                                VAŽEĆE
+                            </div>
+                        </div>
+
+                        <div class="document-card-content">
+
+                            <span class="document-category">MEĐUNARODNI TRANSPORT</span>
+
+                            <h3>TIR sertifikat</h3>
+
+                            <p>
+                                Evidencija TIR odobrenja i dokumentacije za vozilo.
+                            </p>
+
+                            <div class="document-number">
+                                <span>Broj</span>
+                                <strong>TIR-2026-004812</strong>
+                            </div>
+
+                            <div class="document-dates">
+
+                                <div>
+                                    <span>Izdat</span>
+                                    <strong>02.01.2026.</strong>
+                                </div>
+
+                                <div>
+                                    <span>Važi do</span>
+                                    <strong>31.12.2026.</strong>
+                                </div>
+
+                                <div>
+                                    <span>Status</span>
+                                    <strong class="date-good">Validno</strong>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="document-card-footer">
+                            <button class="document-action view-document" data-id="tir">
+                                Uvid
+                            </button>
+
+                            <button class="document-action edit-document" data-id="tir">
+                                Izmena
+                            </button>
+
+                            <button class="document-action file-document" data-id="tir">
+                                Fajl
+                            </button>
+                        </div>
+
+                    </article>
+
+                    <article class="document-card"
+                             data-document-id="license"
+                             data-category="transport"
+                             data-status="valid"
+                             data-search="licenca prevoz tereta dozvola uvoz izvoz licenca srbija">
+
+                        <div class="document-card-top">
+                            <div class="document-icon blue">LIC</div>
+
+                            <div class="document-status valid">
+                                VAŽEĆE
+                            </div>
+                        </div>
+
+                        <div class="document-card-content">
+
+                            <span class="document-category">LICENCA PREVOZNIKA</span>
+
+                            <h3>Licenca / izvod licence</h3>
+
+                            <p>
+                                Licenca prevoznika i dokument vezan za konkretno vozilo.
+                            </p>
+
+                            <div class="document-number">
+                                <span>Broj licence</span>
+                                <strong>LIC-10582-2026</strong>
+                            </div>
+
+                            <div class="document-dates">
+
+                                <div>
+                                    <span>Tip</span>
+                                    <strong>Međunarodni</strong>
+                                </div>
+
+                                <div>
+                                    <span>Važi do</span>
+                                    <strong>30.06.2031.</strong>
+                                </div>
+
+                                <div>
+                                    <span>Izvod</span>
+                                    <strong class="date-good">Aktivan</strong>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="document-card-footer">
+                            <button class="document-action view-document" data-id="license">
+                                Uvid
+                            </button>
+
+                            <button class="document-action edit-document" data-id="license">
+                                Izmena
+                            </button>
+
+                            <button class="document-action file-document" data-id="license">
+                                Fajl
+                            </button>
+                        </div>
+
+                    </article>
+
+                    <article class="document-card"
+                             data-document-id="tachograph"
+                             data-category="vehicle"
+                             data-status="warning"
+                             data-search="tahograf pregled uverenje digitalni analogni">
+
+                        <div class="document-card-top">
+                            <div class="document-icon teal">T</div>
+
+                            <div class="document-status warning">
+                                USKORO KONTROLA
+                            </div>
+                        </div>
+
+                        <div class="document-card-content">
+
+                            <span class="document-category">TAHOGRAF</span>
+
+                            <h3>Uverenje o ispravnosti tahografa</h3>
+
+                            <p>
+                                Evidencija pregleda, tipa tahografa i sledeće kontrole.
+                            </p>
+
+                            <div class="document-number">
+                                <span>Serijski broj</span>
+                                <strong>DT-88421911</strong>
+                            </div>
+
+                            <div class="document-dates">
+
+                                <div>
+                                    <span>Tip</span>
+                                    <strong>Digitalni</strong>
+                                </div>
+
+                                <div>
+                                    <span>Pregled</span>
+                                    <strong>18.09.2025.</strong>
+                                </div>
+
+                                <div>
+                                    <span>Sledeći</span>
+                                    <strong class="date-warning">18.09.2027.</strong>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="document-card-footer">
+                            <button class="document-action view-document" data-id="tachograph">
+                                Uvid
+                            </button>
+
+                            <button class="document-action edit-document" data-id="tachograph">
+                                Izmena
+                            </button>
+
+                            <button class="document-action file-document" data-id="tachograph">
+                                Fajl
+                            </button>
+                        </div>
+
+                    </article>
+
+                    <article class="document-card"
+                             data-document-id="fire-extinguisher"
+                             data-category="safety"
+                             data-status="valid"
+                             data-search="pp aparat protivpožarni požar sertifikat">
+
+                        <div class="document-card-top">
+                            <div class="document-icon red">PP</div>
+
+                            <div class="document-status valid">
+                                VAŽEĆE
+                            </div>
+                        </div>
+
+                        <div class="document-card-content">
+
+                            <span class="document-category">BEZBEDNOST</span>
+
+                            <h3>PP aparati</h3>
+
+                            <p>
+                                Evidencija aparata, serijskog broja i potvrde o ispravnosti.
+                            </p>
+
+                            <div class="document-number">
+                                <span>Serijski broj</span>
+                                <strong>PP-2KG-88219</strong>
+                            </div>
+
+                            <div class="document-dates">
+
+                                <div>
+                                    <span>Tip</span>
+                                    <strong>2 kg ABC</strong>
+                                </div>
+
+                                <div>
+                                    <span>Kontrola</span>
+                                    <strong>05.08.2026.</strong>
+                                </div>
+
+                                <div>
+                                    <span>Sledeća</span>
+                                    <strong class="date-good">05.08.2027.</strong>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="document-card-footer">
+                            <button class="document-action view-document" data-id="fire-extinguisher">
+                                Uvid
+                            </button>
+
+                            <button class="document-action edit-document" data-id="fire-extinguisher">
+                                Izmena
+                            </button>
+
+                            <button class="document-action file-document" data-id="fire-extinguisher">
+                                Fajl
+                            </button>
+                        </div>
+
+                    </article>
+
+                    <article class="document-card"
+                             data-document-id="cemt"
+                             data-category="transport"
+                             data-status="not-applicable"
+                             data-search="cemt dozvola međunarodni transport">
+
+                        <div class="document-card-top">
+                            <div class="document-icon gray">C</div>
+
+                            <div class="document-status neutral">
+                                N/A
+                            </div>
+                        </div>
+
+                        <div class="document-card-content">
+
+                            <span class="document-category">MEĐUNARODNI TRANSPORT</span>
+
+                            <h3>CEMT dokumentacija</h3>
+
+                            <p>
+                                Dokumentacija za CEMT režim kada je vozilu/prevozniku primenljiva.
+                            </p>
+
+                            <div class="document-number">
+                                <span>Status</span>
+                                <strong>Nije trenutno primenljivo</strong>
+                            </div>
+
+                            <div class="document-dates">
+
+                                <div>
+                                    <span>Tip</span>
+                                    <strong>CEMT</strong>
+                                </div>
+
+                                <div>
+                                    <span>Vozilo</span>
+                                    <strong>BG-TR-001</strong>
+                                </div>
+
+                                <div>
+                                    <span>Status</span>
+                                    <strong>Nije aktivno</strong>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="document-card-footer">
+                            <button class="document-action view-document" data-id="cemt">
+                                Uvid
+                            </button>
+
+                            <button class="document-action edit-document" data-id="cemt">
+                                Izmena
+                            </button>
+
+                            <button class="document-action file-document" data-id="cemt">
+                                Fajl
+                            </button>
+                        </div>
+
+                    </article>
+
+                    <article class="document-card"
+                             data-document-id="adr"
+                             data-category="transport"
+                             data-status="not-applicable"
+                             data-search="adr opasne materije sertifikat">
+
+                        <div class="document-card-top">
+                            <div class="document-icon orange">ADR</div>
+
+                            <div class="document-status neutral">
+                                N/A
+                            </div>
+                        </div>
+
+                        <div class="document-card-content">
+
+                            <span class="document-category">OPASNE MATERIJE</span>
+
+                            <h3>ADR dokumentacija vozila</h3>
+
+                            <p>
+                                Aktivira se samo kada vozilo obavlja ADR transport.
+                            </p>
+
+                            <div class="document-number">
+                                <span>Status</span>
+                                <strong>ADR nije aktivan</strong>
+                            </div>
+
+                            <div class="document-dates">
+
+                                <div>
+                                    <span>Režim</span>
+                                    <strong>Standard</strong>
+                                </div>
+
+                                <div>
+                                    <span>Vozilo</span>
+                                    <strong>BG-TR-001</strong>
+                                </div>
+
+                                <div>
+                                    <span>Status</span>
+                                    <strong>Nije primenljivo</strong>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="document-card-footer">
+                            <button class="document-action view-document" data-id="adr">
+                                Uvid
+                            </button>
+
+                            <button class="document-action edit-document" data-id="adr">
+                                Izmena
+                            </button>
+
+                            <button class="document-action file-document" data-id="adr">
+                                Fajl
+                            </button>
+                        </div>
+
+                    </article>
+
+                    <article class="document-card"
+                             data-document-id="lease"
+                             data-category="transport"
+                             data-status="valid"
+                             data-search="zakup lizing ugovor vozilo">
+
+                        <div class="document-card-top">
+                            <div class="document-icon blue">§</div>
+
+                            <div class="document-status valid">
+                                VAŽEĆE
+                            </div>
+                        </div>
+
+                        <div class="document-card-content">
+
+                            <span class="document-category">PRAVNI STATUS</span>
+
+                            <h3>Ugovor o lizingu / zakupu</h3>
+
+                            <p>
+                                Evidencija ugovora kada vozilo nije direktno u vlasništvu.
+                            </p>
+
+                            <div class="document-number">
+                                <span>Ugovor</span>
+                                <strong>LZ-2024-0881</strong>
+                            </div>
+
+                            <div class="document-dates">
+
+                                <div>
+                                    <span>Početak</span>
+                                    <strong>01.01.2024.</strong>
+                                </div>
+
+                                <div>
+                                    <span>Ističe</span>
+                                    <strong>31.12.2028.</strong>
+                                </div>
+
+                                <div>
+                                    <span>Status</span>
+                                    <strong class="date-good">Aktivan</strong>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="document-card-footer">
+                            <button class="document-action view-document" data-id="lease">
+                                Uvid
+                            </button>
+
+                            <button class="document-action edit-document" data-id="lease">
+                                Izmena
+                            </button>
+
+                            <button class="document-action file-document" data-id="lease">
+                                Fajl
+                            </button>
+                        </div>
+
+                    </article>
+
+                    <article class="document-card"
+                             data-document-id="foreign-permits"
+                             data-category="transport"
+                             data-status="valid"
+                             data-search="strana dozvola međunarodna dozvola uvoz izvoz">
+
+                        <div class="document-card-top">
+                            <div class="document-icon purple">INT</div>
+
+                            <div class="document-status valid">
+                                AKTIVNO
+                            </div>
+                        </div>
+
+                        <div class="document-card-content">
+
+                            <span class="document-category">MEĐUNARODNI TRANSPORT</span>
+
+                            <h3>Međunarodne dozvole</h3>
+
+                            <p>
+                                Evidencija pojedinačnih, vremenskih, posebnih i drugih dozvola.
+                            </p>
+
+                            <div class="document-number">
+                                <span>Broj</span>
+                                <strong>INT-2026-11928</strong>
+                            </div>
+
+                            <div class="document-dates">
+
+                                <div>
+                                    <span>Država</span>
+                                    <strong>DE</strong>
+                                </div>
+
+                                <div>
+                                    <span>Tip</span>
+                                    <strong>Pojedinačna</strong>
+                                </div>
+
+                                <div>
+                                    <span>Status</span>
+                                    <strong class="date-good">Aktivna</strong>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="document-card-footer">
+                            <button class="document-action view-document" data-id="foreign-permits">
+                                Uvid
+                            </button>
+
+                            <button class="document-action edit-document" data-id="foreign-permits">
+                                Izmena
+                            </button>
+
+                            <button class="document-action file-document" data-id="foreign-permits">
+                                Fajl
+                            </button>
+                        </div>
+
+                    </article>
+
+                </div>
+
+            </div>
+
+            <aside class="compliance-side">
+
+                <div class="side-card alerts-card">
+
+                    <div class="side-card-header">
+                        <div>
+                            <span class="section-kicker">ALERT ENGINE</span>
+                            <h3>Rokovi i upozorenja</h3>
+                        </div>
+
+                        <span class="alert-count" id="sideAlertCount">2</span>
+                    </div>
+
+                    <div class="alert-list">
+
+                        <div class="alert-item warning">
+                            <div class="alert-icon">!</div>
+
+                            <div>
+                                <strong>Tehnički pregled</strong>
+                                <span>Rok je istekao / potrebno ažuriranje</span>
+                                <small>17.09.2026.</small>
+                            </div>
+                        </div>
+
+                        <div class="alert-item warning">
+                            <div class="alert-icon">!</div>
+
+                            <div>
+                                <strong>Tahograf</strong>
+                                <span>Kontrola se približava</span>
+                                <small>18.09.2027.</small>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <button type="button" class="side-link" id="showAllAlerts">
+                        Prikaži sve alerte →
+                    </button>
+
+                </div>
+
+                <div class="side-card">
+
+                    <div class="side-card-header">
+                        <div>
+                            <span class="section-kicker">QUICK ACTIONS</span>
+                            <h3>Brze akcije</h3>
+                        </div>
+                    </div>
+
+                    <div class="quick-actions">
+
+                        <button type="button" class="quick-action" data-action="add">
+                            <span>＋</span>
+                            <div>
+                                <strong>Novi dokument</strong>
+                                <small>Dodaj dokument vozila</small>
+                            </div>
+                        </button>
+
+                        <button type="button" class="quick-action" data-action="service">
+                            <span>⚙</span>
+                            <div>
+                                <strong>Servis</strong>
+                                <small>Dodaj servisni zapis</small>
+                            </div>
+                        </button>
+
+                        <button type="button" class="quick-action" data-action="repair">
+                            <span>🔧</span>
+                            <div>
+                                <strong>Popravka</strong>
+                                <small>Evidentiraj popravku</small>
+                            </div>
+                        </button>
+
+                        <button type="button" class="quick-action" data-action="fault">
+                            <span>⚠</span>
+                            <div>
+                                <strong>Greška</strong>
+                                <small>Prijavi novu grešku</small>
+                            </div>
+                        </button>
+
+                        <button type="button" class="quick-action" data-action="note">
+                            <span>✎</span>
+                            <div>
+                                <strong>Napomena</strong>
+                                <small>Dodaj internu napomenu</small>
+                            </div>
+                        </button>
+
+                    </div>
+
+                </div>
+
+                <div class="side-card">
+
+                    <div class="side-card-header">
+                        <div>
+                            <span class="section-kicker">DOCUMENT MATRIX</span>
+                            <h3>Kategorije</h3>
+                        </div>
+                    </div>
+
+                    <div class="category-summary">
+
+                        <div class="category-row">
+                            <span>
+                                <i class="category-dot green"></i>
+                                Vozilo
+                            </span>
+                            <strong>7 / 7</strong>
+                        </div>
+
+                        <div class="category-row">
+                            <span>
+                                <i class="category-dot purple"></i>
+                                Transport
+                            </span>
+                            <strong>4 / 6</strong>
+                        </div>
+
+                        <div class="category-row">
+                            <span>
+                                <i class="category-dot red"></i>
+                                Bezbednost
+                            </span>
+                            <strong>1 / 1</strong>
+                        </div>
+
+                        <div class="category-row">
+                            <span>
+                                <i class="category-dot blue"></i>
+                                Pravna dokumentacija
+                            </span>
+                            <strong>2 / 2</strong>
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </aside>
+
+        </div>
+
+    </section>
+
+    <section class="compliance-tab-panel" data-panel="maintenance">
+
+        <div class="panel-heading">
+            <div>
+                <span class="section-kicker">MAINTENANCE</span>
+                <h2>Održavanje vozila</h2>
+                <p>Planirani i izvršeni servisni radovi za izabrano vozilo.</p>
+            </div>
+
+            <button class="compliance-btn primary" id="addMaintenanceBtn">
+                ＋ Novi servis
+            </button>
+        </div>
+
+        <div class="maintenance-grid">
+
+            <div class="maintenance-card highlight">
+                <span class="maintenance-type">SLEDEĆI SERVIS</span>
+                <strong>8.420 km</strong>
+                <p>Mali servis</p>
+                <div class="maintenance-progress">
+                    <div style="width:72%"></div>
+                </div>
+                <small>72% servisnog intervala</small>
+            </div>
+
+            <div class="maintenance-card">
+                <span class="maintenance-type">MALI SERVIS</span>
+                <strong>142.180 km</strong>
+                <p>Poslednji servis</p>
+                <small>12.06.2026. · Mobil Servis</small>
+            </div>
+
+            <div class="maintenance-card">
+                <span class="maintenance-type">VELIKI SERVIS</span>
+                <strong>198.000 km</strong>
+                <p>Planiran</p>
+                <small>Predviđeno za 2027.</small>
+            </div>
+
+        </div>
+
+        <div class="records-card">
+
+            <div class="records-card-header">
+                <div>
+                    <span class="section-kicker">SERVICE LOG</span>
+                    <h3>Istorija servisa</h3>
+                </div>
+            </div>
+
+            <div class="records-table-wrapper">
+
+                <table class="records-table">
+                    <thead>
+                        <tr>
+                            <th>Datum</th>
+                            <th>Tip</th>
+                            <th>KM</th>
+                            <th>Servis</th>
+                            <th>Opis</th>
+                            <th>Status</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+
+                        <tr>
+                            <td>12.06.2026.</td>
+                            <td><span class="type-pill green">Mali servis</span></td>
+                            <td>142.180</td>
+                            <td>Mobil Servis</td>
+                            <td>Ulje, filteri, kontrola kočnica</td>
+                            <td><span class="table-status good">Završeno</span></td>
+                            <td><button class="row-action">⋮</button></td>
+                        </tr>
+
+                        <tr>
+                            <td>18.02.2026.</td>
+                            <td><span class="type-pill blue">Veliki servis</span></td>
+                            <td>128.700</td>
+                            <td>Truck Service BG</td>
+                            <td>Kompletan veliki servis</td>
+                            <td><span class="table-status good">Završeno</span></td>
+                            <td><button class="row-action">⋮</button></td>
+                        </tr>
+
+                    </tbody>
+                </table>
+
+            </div>
+
+        </div>
+
+    </section>
+
+    <section class="compliance-tab-panel" data-panel="repairs">
+
+        <div class="panel-heading">
+
+            <div>
+                <span class="section-kicker">REPAIR HISTORY</span>
+                <h2>Popravke</h2>
+                <p>Detaljna evidencija svih intervencija na vozilu.</p>
+            </div>
+
+            <button class="compliance-btn primary" id="addRepairBtn">
+                ＋ Nova popravka
+            </button>
+
+        </div>
+
+        <div class="records-card">
+
+            <div class="records-table-wrapper">
+
+                <table class="records-table">
+                    <thead>
+                        <tr>
+                            <th>Datum</th>
+                            <th>Prioritet</th>
+                            <th>Sistem</th>
+                            <th>Opis</th>
+                            <th>Servis</th>
+                            <th>Trošak</th>
+                            <th>Status</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+
+                        <tr>
+                            <td>08.09.2026.</td>
+                            <td><span class="priority-pill medium">Srednji</span></td>
+                            <td>Kočioni sistem</td>
+                            <td>Zamena prednjih pločica</td>
+                            <td>Truck Service BG</td>
+                            <td>74.500 RSD</td>
+                            <td><span class="table-status good">Završeno</span></td>
+                            <td><button class="row-action">⋮</button></td>
+                        </tr>
+
+                        <tr>
+                            <td>27.08.2026.</td>
+                            <td><span class="priority-pill high">Visok</span></td>
+                            <td>Elektronika</td>
+                            <td>Greška EBS senzora</td>
+                            <td>Mercedes Truck Service</td>
+                            <td>31.200 RSD</td>
+                            <td><span class="table-status good">Završeno</span></td>
+                            <td><button class="row-action">⋮</button></td>
+                        </tr>
+
+                        <tr>
+                            <td>13.07.2026.</td>
+                            <td><span class="priority-pill low">Nizak</span></td>
+                            <td>Karoserija</td>
+                            <td>Popravka bočne zaštite</td>
+                            <td>Fleet Workshop</td>
+                            <td>18.900 RSD</td>
+                            <td><span class="table-status good">Završeno</span></td>
+                            <td><button class="row-action">⋮</button></td>
+                        </tr>
+
+                    </tbody>
+                </table>
+
+            </div>
+
+        </div>
+
+    </section>
+
+    <section class="compliance-tab-panel" data-panel="faults">
+
+        <div class="panel-heading">
+
+            <div>
+                <span class="section-kicker">FAULT MANAGEMENT</span>
+                <h2>Greške i kvarovi</h2>
+                <p>Otvorene, rešene i istorijske greške vozila.</p>
+            </div>
+
+            <button class="compliance-btn primary" id="addFaultBtn">
+                ＋ Prijavi grešku
+            </button>
+
+        </div>
+
+        <div class="fault-summary">
+
+            <div class="fault-summary-card danger">
+                <span>Otvorene greške</span>
+                <strong>1</strong>
+                <small>Zahteva pažnju</small>
+            </div>
+
+            <div class="fault-summary-card warning">
+                <span>Praćenje</span>
+                <strong>2</strong>
+                <small>Bez trenutne blokade</small>
+            </div>
+
+            <div class="fault-summary-card good">
+                <span>Rešene</span>
+                <strong>27</strong>
+                <small>U istoriji vozila</small>
+            </div>
+
+        </div>
+
+        <div class="records-card">
+
+            <div class="records-table-wrapper">
+
+                <table class="records-table">
+                    <thead>
+                        <tr>
+                            <th>Datum</th>
+                            <th>Greška</th>
+                            <th>Sistem</th>
+                            <th>Prioritet</th>
+                            <th>Km</th>
+                            <th>Status</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+
+                        <tr>
+                            <td>15.09.2026.</td>
+                            <td>EBS warning</td>
+                            <td>Kočnice</td>
+                            <td><span class="priority-pill high">Visok</span></td>
+                            <td>145.920</td>
+                            <td><span class="table-status warning">Otvoreno</span></td>
+                            <td><button class="row-action">⋮</button></td>
+                        </tr>
+
+                        <tr>
+                            <td>28.08.2026.</td>
+                            <td>DPF regeneration</td>
+                            <td>Motor</td>
+                            <td><span class="priority-pill low">Nizak</span></td>
+                            <td>139.120</td>
+                            <td><span class="table-status good">Rešeno</span></td>
+                            <td><button class="row-action">⋮</button></td>
+                        </tr>
+
+                    </tbody>
+                </table>
+
+            </div>
+
+        </div>
+
+    </section>
+
+    <section class="compliance-tab-panel" data-panel="notes">
+
+        <div class="panel-heading">
+
+            <div>
+                <span class="section-kicker">VEHICLE NOTES</span>
+                <h2>Napomene</h2>
+                <p>Operativne, tehničke i interne napomene vezane za vozilo.</p>
+            </div>
+
+            <button class="compliance-btn primary" id="addNoteBtn">
+                ＋ Nova napomena
+            </button>
+
+        </div>
+
+        <div class="notes-grid">
+
+            <article class="note-card">
+                <div class="note-card-head">
+                    <span class="note-tag blue">OPERATIVNO</span>
+                    <span>15.09.2026.</span>
+                </div>
+
+                <h3>Vozilo spremno za međunarodni transport</h3>
+
+                <p>
+                    Dokumentacija proverena. Vozilo može biti dodeljeno
+                    međunarodnoj turi.
+                </p>
+
+                <footer>
+                    <span>Marko Petrović</span>
+                    <button class="row-action">⋮</button>
+                </footer>
+            </article>
+
+            <article class="note-card">
+                <div class="note-card-head">
+                    <span class="note-tag yellow">SERVIS</span>
+                    <span>12.09.2026.</span>
+                </div>
+
+                <h3>Proveriti stanje pneumatika</h3>
+
+                <p>
+                    Na sledećem servisu obavezno proveriti dubinu šare
+                    i stanje zadnje osovine.
+                </p>
+
+                <footer>
+                    <span>Fleet Manager</span>
+                    <button class="row-action">⋮</button>
+                </footer>
+            </article>
+
+            <article class="note-card">
+                <div class="note-card-head">
+                    <span class="note-tag purple">DOKUMENT</span>
+                    <span>05.09.2026.</span>
+                </div>
+
+                <h3>Prikolica promenjena</h3>
+
+                <p>
+                    Trenutno vozilo koristi poluprikolicu BG-PR-041.
+                    Potvrda prikolice je evidentirana.
+                </p>
+
+                <footer>
+                    <span>Dispatch</span>
+                    <button class="row-action">⋮</button>
+                </footer>
+            </article>
+
+        </div>
+
+    </section>
+
+    <section class="compliance-tab-panel" data-panel="history">
+
+        <div class="panel-heading">
+
+            <div>
+                <span class="section-kicker">AUDIT TRAIL</span>
+                <h2>Istorija promena</h2>
+                <p>Ko je i kada menjao podatke o compliance dokumentaciji.</p>
+            </div>
+
+        </div>
+
+        <div class="history-card">
+
+            <div class="history-item">
+                <div class="history-dot green"></div>
+
+                <div class="history-content">
+                    <strong>Ažuriran tehnički pregled</strong>
+                    <span>Dokument TP-2026-09112</span>
+                    <small>Marko Petrović · 15.09.2026. · 14:32</small>
+                </div>
+
+                <span class="history-action">IZMENA</span>
+            </div>
+
+            <div class="history-item">
+                <div class="history-dot blue"></div>
+
+                <div class="history-content">
+                    <strong>Dodat Euro 6 dokument</strong>
+                    <span>EU6-BG-2026-001</span>
+                    <small>Fleet Admin · 10.09.2026. · 09:11</small>
+                </div>
+
+                <span class="history-action">DODATO</span>
+            </div>
+
+            <div class="history-item">
+                <div class="history-dot orange"></div>
+
+                <div class="history-content">
+                    <strong>Promenjena prikolica</strong>
+                    <span>BG-PR-039 → BG-PR-041</span>
+                    <small>Dispatch · 05.09.2026. · 18:42</small>
+                </div>
+
+                <span class="history-action">IZMENA</span>
+            </div>
+
+        </div>
+
+    </section>
+
+</div>
+
+<div class="compliance-modal" id="documentModal" aria-hidden="true">
+
+    <div class="modal-backdrop" data-close-modal></div>
+
+    <div class="compliance-modal-dialog">
+
+        <div class="modal-header">
+
+            <div>
+                <span class="section-kicker" id="modalKicker">DOCUMENT</span>
+                <h2 id="modalTitle">Novi dokument</h2>
+            </div>
+
+            <button type="button" class="modal-close" data-close-modal>
+                ×
+            </button>
+
+        </div>
+
+        <form id="documentForm">
+
+            <input type="hidden" id="documentId">
+
+            <div class="modal-body">
+
+                <div class="form-section-title">
+                    <span>01</span>
+                    Osnovni podaci
+                </div>
+
+                <div class="form-grid">
+
+                    <label class="form-field full">
+                        <span>Vrsta dokumenta</span>
+
+                        <select id="documentType" required>
+                            <option value="">Izaberi dokument</option>
+                            <option>Saobraćajna dozvola / registracija</option>
+                            <option>Obavezno osiguranje</option>
+                            <option>Euro 6 — kamion</option>
+                            <option>Euro potvrda — prikolica</option>
+                            <option>Tehnički pregled</option>
+                            <option>TIR sertifikat</option>
+                            <option>Licenca / izvod licence</option>
+                            <option>Tahograf</option>
+                            <option>PP aparat</option>
+                            <option>CEMT dokumentacija</option>
+                            <option>ADR dokumentacija</option>
+                            <option>Međunarodna dozvola</option>
+                            <option>Ugovor o lizingu / zakupu</option>
+                            <option>Drugi dokument</option>
+                        </select>
+                    </label>
+
+                    <label class="form-field">
+                        <span>Kategorija</span>
+
+                        <select id="documentCategory">
+                            <option value="vehicle">Vozilo</option>
+                            <option value="transport">Transport</option>
+                            <option value="safety">Bezbednost</option>
+                            <option value="legal">Pravna dokumentacija</option>
+                        </select>
+                    </label>
+
+                    <label class="form-field">
+                        <span>Status</span>
+
+                        <select id="documentStatus">
+                            <option value="valid">Važeće</option>
+                            <option value="warning">Uskoro ističe</option>
+                            <option value="expired">Isteklo</option>
+                            <option value="missing">Nedostaje</option>
+                            <option value="not-applicable">Nije primenljivo</option>
+                        </select>
+                    </label>
+
+                    <label class="form-field">
+                        <span>Broj dokumenta</span>
+                        <input type="text" id="documentNumber" placeholder="npr. TP-2026-001">
+                    </label>
+
+                    <label class="form-field">
+                        <span>Izdavalac</span>
+                        <input type="text" id="documentIssuer" placeholder="Naziv institucije / organizacije">
+                    </label>
+
+                </div>
+
+                <div class="form-section-title">
+                    <span>02</span>
+                    Rokovi
+                </div>
+
+                <div class="form-grid">
+
+                    <label class="form-field">
+                        <span>Datum izdavanja</span>
+                        <input type="date" id="documentIssueDate">
+                    </label>
+
+                    <label class="form-field">
+                        <span>Datum isteka</span>
+                        <input type="date" id="documentExpiryDate">
+                    </label>
+
+                    <label class="form-field">
+                        <span>Sledeća kontrola</span>
+                        <input type="date" id="documentNextCheck">
+                    </label>
+
+                    <label class="form-field">
+                        <span>Alert pre isteka</span>
+
+                        <select id="documentAlertDays">
+                            <option value="7">7 dana</option>
+                            <option value="14">14 dana</option>
+                            <option value="30" selected>30 dana</option>
+                            <option value="60">60 dana</option>
+                            <option value="90">90 dana</option>
+                        </select>
+                    </label>
+
+                </div>
+
+                <div class="form-section-title">
+                    <span>03</span>
+                    Dodatni podaci
+                </div>
+
+                <div class="form-grid">
+
+                    <label class="form-field">
+                        <span>Primenljivo</span>
+
+                        <select id="documentApplicability">
+                            <option>Obavezno za ovo vozilo</option>
+                            <option>Obavezno kada je primenljivo</option>
+                            <option>Međunarodni transport</option>
+                            <option>ADR transport</option>
+                            <option>TIR režim</option>
+                            <option>CEMT režim</option>
+                            <option>Nije primenljivo</option>
+                        </select>
+                    </label>
+
+                    <label class="form-field">
+                        <span>Priključno vozilo</span>
+
+                        <select id="documentTrailer">
+                            <option value="">Nije vezano za prikolicu</option>
+                            <option>BG-PR-041</option>
+                            <option>BG-PR-039</option>
+                            <option>BG-PR-038</option>
+                        </select>
+                    </label>
+
+                    <label class="form-field full">
+                        <span>Napomena</span>
+                        <textarea id="documentNote" rows="4" placeholder="Dodatna napomena..."></textarea>
+                    </label>
+
+                </div>
+
+                <div class="upload-zone" id="uploadZone">
+
+                    <div class="upload-icon">⇧</div>
+
+                    <strong>Dodaj dokument</strong>
+
+                    <span>
+                        PDF, JPG, PNG ili drugi podržani format
+                    </span>
+
+                    <input type="file" id="documentFile" hidden>
+
+                    <button type="button" class="upload-button" id="chooseFile">
+                        Izaberi fajl
+                    </button>
+
+                    <div class="selected-file" id="selectedFile"></div>
+
+                </div>
+
+            </div>
+
+            <div class="modal-footer">
+
+                <button type="button" class="compliance-btn secondary" data-close-modal>
+                    Otkaži
+                </button>
+
+                <button type="submit" class="compliance-btn primary">
+                    Sačuvaj dokument
+                </button>
+
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+<div class="compliance-toast" id="complianceToast">
+    <span id="toastIcon">✓</span>
     <div>
-      <div class="pm-brand">ProMap <span>Cargo</span></div>
-      <div class="pm-kicker">Compliance</div>
-      <div class="pm-subtitle">Safety and regulatory checks for the fleet</div>
+        <strong id="toastTitle">Sačuvano</strong>
+        <span id="toastMessage">Promena je uspešno sačuvana.</span>
     </div>
-    <div class="pm-header-actions">
-      <a class="pm-btn pm-btn-primary" href="/dispatch">Command Center</a>
-      <a class="pm-btn" href="/profile">Profil</a>
-    </div>
-  </header>
-  <div class="pm-layout">
-    <aside class="pm-sidebar">
-      <div class="pm-nav-title">OPERATIONS</div>
-      <nav class="pm-nav"><a class="" href="/dashboard">Dashboard</a><a class="" href="/dispatch">Command Center</a><a
-        class="" href="/orders">Transportni nalozi</a><a class="" href="/trips">Ture</a><a class=""
-                                                                                           href="/vehicles">Vozila</a><a class="" href="/drivers">Vozači</a><a class=""
-                                                                            href="/navigation">Navigacija</a><a class="" href="/alerts">Alerts</a><a class=""
-                                                                                 href="/moderation">Moderacija</a><a class="" href="/audit">Audit</a><a class="active"
-                                                                               href="/compliance">Compliance</a><a class="" href="/monitoring">Monitoring</a><a class=""
-                                                                                         href="/finance">Finansije</a><a class="" href="/reports">Izveštaji</a><a class=""
-                                                                                 href="/settings">Podešavanja</a><a class="" href="/profile">Profil</a><a class=""
-                                                                                 href="/admin">Administracija</a></nav>
-        <div class="pm-sidebar-footer"><b>Routing engine</b><br>PostGIS · OSM · Truck-aware<br><span>Graph
-          protected</span></div>
-        </aside>
-        <main class="pm-content">
-          <div class="pm-title">Compliance</div>
-          <div class="pm-muted" style="margin:5px 0 14px">Truck dimensions, weight and restriction compliance.</div>
-          <div class="pm-grid pm-grid-4">
-            <div class="pm-card pm-stat"><small>Compliance score</small>
-              <div class="pm-value">96%</div>
-              <div class="pm-muted">fleet</div>
-            </div>
-            <div class="pm-card pm-stat"><small>Pass</small>
-              <div class="pm-value">38</div>
-              <div class="pm-muted">vehicles</div>
-            </div>
-            <div class="pm-card pm-stat"><small>Review</small>
-              <div class="pm-value">2</div>
-              <div class="pm-muted">vehicles</div>
-            </div>
-            <div class="pm-card pm-stat"><small>Fail</small>
-              <div class="pm-value">1</div>
-              <div class="pm-muted">vehicle</div>
-            </div>
-          </div>
-          <div style="height:14px"></div>
-          <div class="pm-card" style="overflow:auto">
-            <table class="pm-table">
-              <thead>
-                <tr>
-                  <th>Vehicle</th>
-                  <th>Check</th>
-                  <th>Actual</th>
-                  <th>Limit</th>
-                  <th>Result</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>BG-241-AA</td>
-                  <td>Height</td>
-                  <td>4.00 m</td>
-                  <td>4.20 m</td>
-                  <td><span class="pm-badge ">Pass</span></td>
-                </tr>
-                <tr>
-                  <td>NS-882-KK</td>
-                  <td>Weight</td>
-                  <td>40 t</td>
-                  <td>40 t</td>
-                  <td><span class="pm-badge ">Pass</span></td>
-                </tr>
-                <tr>
-                  <td>NI-401-TT</td>
-                  <td>Height</td>
-                  <td>4.00 m</td>
-                  <td>3.90 m</td>
-                  <td><span class="pm-badge danger">Fail</span></td>
-                </tr>
-                <tr>
-                  <td>KG-119-MP</td>
-                  <td>Axle load</td>
-                  <td>10 t</td>
-                  <td>11.5 t</td>
-                  <td><span class="pm-badge warn">Review</span></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </main>
-      </div>
-    </div>
+</div>
 
-    <style>
-      .pm-page {
-        min-height: 100vh;
-        background: linear-gradient(135deg, #022c22, #064e3b 55%, #075e54);
-        color: #f8fafc;
-        font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif
-      }
+<style>
 
-      .pm-header {
-        height: 74px;
+    .pm-compliance-page {
+        width: 100%;
+        max-width: 1700px;
+        margin: 0 auto;
+        padding: 34px 34px 70px;
+    }
+
+    .compliance-header {
         display: flex;
-        align-items: center;
         justify-content: space-between;
-        padding: 0 28px;
-        border-bottom: 1px solid rgba(255, 255, 255, .1);
-        background: rgba(2, 44, 34, .9);
-        position: sticky;
-        top: 0;
-        z-index: 40;
-        backdrop-filter: blur(12px)
-      }
+        gap: 28px;
+        align-items: flex-start;
+        margin-bottom: 28px;
+    }
 
-      .pm-brand {
-        font-size: 21px;
-        font-weight: 900
-      }
+    .compliance-heading {
+        max-width: 850px;
+    }
 
-      .pm-brand span {
-        color: #2dd4bf
-      }
-
-      .pm-kicker {
+    .compliance-kicker,
+    .section-kicker,
+    .health-label,
+    .fleet-selector-label {
+        display: block;
         font-size: 12px;
         font-weight: 800;
-        margin-top: 3px
-      }
+        letter-spacing: .16em;
+        text-transform: uppercase;
+        color: var(--pm-teal);
+    }
 
-      .pm-subtitle {
-        font-size: 11px;
-        color: #a7f3d0;
-        margin-top: 2px
-      }
+    .compliance-heading h1 {
+        margin: 7px 0 8px;
+        font-size: clamp(30px, 3vw, 44px);
+        line-height: 1.05;
+        letter-spacing: -.035em;
+        color: var(--pm-text);
+    }
 
-      .pm-header-actions {
+    .compliance-heading p {
+        margin: 0;
+        color: var(--pm-text-muted);
+        font-size: 16px;
+        line-height: 1.65;
+    }
+
+    .compliance-header-actions {
         display: flex;
-        gap: 8px
-      }
+        gap: 10px;
+        flex-wrap: wrap;
+    }
 
-      .pm-btn {
+    .compliance-btn {
+        min-height: 46px;
+        border: 1px solid var(--pm-border);
+        border-radius: var(--pm-radius-md);
+        padding: 0 17px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        border: 1px solid rgba(255, 255, 255, .12);
-        border-radius: 9px;
-        padding: 9px 13px;
-        color: #f8fafc;
-        text-decoration: none;
-        background: #075e54;
-        font-size: 12px;
+        gap: 8px;
         font-weight: 800;
-        cursor: pointer
-      }
+        font-size: 14px;
+        cursor: pointer;
+        transition: .2s ease;
+    }
 
-      .pm-btn:hover {
-        filter: brightness(1.12)
-      }
+    .compliance-btn:hover {
+        transform: translateY(-1px);
+        border-color: var(--pm-border-strong);
+    }
 
-      .pm-btn-primary {
-        background: #10b981;
-        color: #022c22;
-        border-color: #10b981
-      }
+    .compliance-btn.primary {
+        color: #03120e;
+        background: var(--pm-emerald-500);
+        box-shadow: 0 10px 28px rgba(16, 185, 129, .18);
+    }
 
-      .pm-layout {
-        display: flex;
-        min-height: calc(100vh - 74px)
-      }
+    .compliance-btn.secondary {
+        color: var(--pm-text-soft);
+        background: var(--pm-surface);
+    }
 
-      .pm-sidebar {
-        width: 238px;
-        flex: 0 0 238px;
-        border-right: 1px solid rgba(255, 255, 255, .1);
-        padding: 20px 12px;
-        display: flex;
-        flex-direction: column
-      }
+    .fleet-selector-card,
+    .compliance-health,
+    .side-card,
+    .records-card,
+    .maintenance-card,
+    .fault-summary-card,
+    .note-card,
+    .history-card {
+        background: linear-gradient(145deg, rgba(7, 48, 40, .86), rgba(3, 27, 23, .82));
+        border: 1px solid var(--pm-border);
+        box-shadow: var(--pm-shadow-sm);
+    }
 
-      .pm-nav-title {
-        font-size: 10px;
-        color: #6ee7b7;
-        font-weight: 900;
-        letter-spacing: .12em;
-        padding: 0 10px 8px
-      }
-
-      .pm-nav {
-        display: flex;
-        flex-direction: column;
-        gap: 4px
-      }
-
-      .pm-nav a {
-        color: #c8f7e5;
-        text-decoration: none;
-        padding: 10px;
-        border-radius: 8px;
-        font-size: 12px;
-        font-weight: 700
-      }
-
-      .pm-nav a:hover,
-      .pm-nav a.active {
-        background: #075e54;
-        color: #fff
-      }
-
-      .pm-sidebar-footer {
-        margin-top: auto;
-        border-top: 1px solid rgba(255, 255, 255, .1);
-        padding: 14px 10px;
-        font-size: 10px;
-        color: #a7f3d0;
-        line-height: 1.65
-      }
-
-      .pm-sidebar-footer span {
-        color: #5eead4
-      }
-
-      .pm-content {
-        flex: 1;
-        min-width: 0;
-        padding: 25px;
-        max-width: 1600px
-      }
-
-      .pm-grid {
-        display: grid;
-        gap: 14px
-      }
-
-      .pm-grid-2 {
-        grid-template-columns: repeat(2, minmax(0, 1fr))
-      }
-
-      .pm-grid-3 {
-        grid-template-columns: repeat(3, minmax(0, 1fr))
-      }
-
-      .pm-grid-4 {
-        grid-template-columns: repeat(4, minmax(0, 1fr))
-      }
-
-      .pm-grid-6 {
-        grid-template-columns: repeat(6, minmax(0, 1fr))
-      }
-
-      .pm-card {
-        background: rgba(6, 78, 59, .86);
-        border: 1px solid rgba(255, 255, 255, .1);
-        border-radius: 14px;
-        box-shadow: 0 12px 35px rgba(0, 0, 0, .12)
-      }
-
-      .pm-card-head {
-        padding: 16px;
-        border-bottom: 1px solid rgba(255, 255, 255, .08);
+    .fleet-selector-card {
+        border-radius: var(--pm-radius-xl);
+        padding: 23px;
         display: flex;
         align-items: center;
-        justify-content: space-between
-      }
+        justify-content: space-between;
+        gap: 30px;
+        margin-bottom: 18px;
+    }
 
-      .pm-card-body {
-        padding: 16px
-      }
-
-      .pm-title {
-        font-size: 22px;
-        font-weight: 900
-      }
-
-      .pm-h2 {
-        font-size: 15px;
-        font-weight: 900
-      }
-
-      .pm-muted {
-        color: #a7f3d0;
-        font-size: 11px
-      }
-
-      .pm-label {
-        display: block;
-        color: #a7f3d0;
-        font-size: 10px;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: .08em;
-        margin-bottom: 5px
-      }
-
-      .pm-value {
-        font-size: 24px;
-        font-weight: 900;
-        margin-top: 3px
-      }
-
-      .pm-field {
-        width: 100%;
-        box-sizing: border-box;
-        border: 1px solid rgba(255, 255, 255, .12);
-        background: #043f31;
-        color: #fff;
-        border-radius: 9px;
-        padding: 10px;
-        font-size: 12px;
-        outline: none
-      }
-
-      .pm-field:focus {
-        border-color: #2dd4bf
-      }
-
-      .pm-row {
+    .fleet-selector-main {
         display: flex;
-        gap: 9px;
-        align-items: center
-      }
+        align-items: center;
+        gap: 18px;
+        min-width: 0;
+    }
 
-      .pm-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 12px
-      }
+    .fleet-selector-icon {
+        width: 58px;
+        height: 58px;
+        border-radius: 16px;
+        display: grid;
+        place-items: center;
+        background: rgba(16, 185, 129, .12);
+        border: 1px solid rgba(45, 212, 191, .22);
+        font-size: 27px;
+        flex: 0 0 auto;
+    }
 
-      .pm-table th {
-        color: #a7f3d0;
-        font-size: 10px;
-        text-transform: uppercase;
-        text-align: left;
-        padding: 11px;
-        border-bottom: 1px solid rgba(255, 255, 255, .1)
-      }
+    .fleet-selector-info {
+        min-width: 0;
+    }
 
-      .pm-table td {
-        padding: 12px 11px;
-        border-bottom: 1px solid rgba(255, 255, 255, .07)
-      }
+    .fleet-selector-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 7px;
+    }
 
-      .pm-table tr:hover td {
-        background: rgba(255, 255, 255, .025)
-      }
+    .vehicle-select {
+        min-width: 390px;
+        font-size: 18px;
+        font-weight: 800;
+        color: var(--pm-text);
+        background: transparent;
+        border: 0;
+        padding: 0;
+    }
 
-      .pm-badge {
-        display: inline-flex;
-        padding: 4px 8px;
+    .vehicle-select:focus {
+        outline: none;
+    }
+
+    .vehicle-status-chip {
         border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 10px;
+        letter-spacing: .12em;
+        font-weight: 900;
+        white-space: nowrap;
+    }
+
+    .vehicle-status-chip.good {
+        color: var(--pm-success);
+        background: var(--pm-success-bg);
+        border: 1px solid rgba(52, 211, 153, .18);
+    }
+
+    .vehicle-status-chip.warning {
+        color: var(--pm-warning);
+        background: var(--pm-warning-bg);
+    }
+
+    .vehicle-status-chip.danger {
+        color: var(--pm-danger);
+        background: var(--pm-danger-bg);
+    }
+
+    .fleet-selector-meta {
+        margin-top: 7px;
+        color: var(--pm-text-muted);
+        font-size: 13px;
+    }
+
+    .vehicle-quick-info {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(110px, 1fr));
+        gap: 22px;
+        min-width: 520px;
+    }
+
+    .vehicle-quick-info span,
+    .health-stat-label,
+    .document-dates span,
+    .document-number span,
+    .maintenance-type,
+    .form-field > span,
+    .category-row,
+    .note-card-head,
+    .history-action {
+        color: var(--pm-text-dim);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+    }
+
+    .vehicle-quick-info strong {
+        display: block;
+        margin-top: 5px;
+        color: var(--pm-text-soft);
+        font-size: 13px;
+    }
+
+    .compliance-health {
+        border-radius: var(--pm-radius-xl);
+        padding: 25px;
+        display: grid;
+        grid-template-columns: 1.45fr 1fr;
+        gap: 30px;
+        margin-bottom: 24px;
+    }
+
+    .health-main {
+        display: flex;
+        align-items: center;
+        gap: 23px;
+    }
+
+    .health-ring {
+        width: 130px;
+        height: 130px;
+        position: relative;
+        flex: 0 0 auto;
+    }
+
+    .health-ring svg {
+        width: 100%;
+        height: 100%;
+        transform: rotate(-90deg);
+    }
+
+    .health-ring circle {
+        fill: none;
+        stroke-width: 9;
+    }
+
+    .health-ring-bg {
+        stroke: rgba(255,255,255,.06);
+    }
+
+    .health-ring-progress {
+        stroke: var(--pm-emerald-400);
+        stroke-linecap: round;
+        stroke-dasharray: 301.6;
+        stroke-dashoffset: 27;
+        transition: stroke-dashoffset .7s ease;
+    }
+
+    .health-ring-value {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        text-align: center;
+    }
+
+    .health-ring-value strong {
+        color: var(--pm-text);
+        font-size: 25px;
+        line-height: 1;
+    }
+
+    .health-ring-value span {
+        color: var(--pm-text-muted);
+        font-size: 10px;
+        margin-top: 4px;
+    }
+
+    .health-copy h2 {
+        margin: 7px 0 6px;
+        color: var(--pm-text);
+        font-size: 22px;
+    }
+
+    .health-copy p {
+        margin: 0;
+        max-width: 680px;
+        color: var(--pm-text-muted);
+        font-size: 14px;
+        line-height: 1.6;
+    }
+
+    .health-badges {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 13px;
+    }
+
+    .health-badge {
+        border-radius: 999px;
+        padding: 6px 9px;
+        font-size: 11px;
+        font-weight: 800;
+    }
+
+    .health-badge.good {
+        color: var(--pm-success);
+        background: var(--pm-success-bg);
+    }
+
+    .health-badge.warning {
+        color: var(--pm-warning);
+        background: var(--pm-warning-bg);
+    }
+
+    .health-badge.danger {
+        color: var(--pm-danger);
+        background: var(--pm-danger-bg);
+    }
+
+    .health-stats {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+
+    .health-stat {
+        border: 1px solid var(--pm-border-soft);
+        background: rgba(0,0,0,.12);
+        border-radius: var(--pm-radius-md);
+        padding: 15px;
+    }
+
+    .health-stat strong {
+        display: block;
+        margin-top: 5px;
+        font-size: 22px;
+        color: var(--pm-text);
+    }
+
+    .health-stat small {
+        color: var(--pm-text-muted);
+        font-size: 11px;
+    }
+
+    .compliance-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 18px;
+        margin-bottom: 18px;
+        flex-wrap: wrap;
+    }
+
+    .compliance-tabs {
+        display: flex;
+        gap: 4px;
+        flex-wrap: wrap;
+        border-bottom: 1px solid var(--pm-border);
+    }
+
+    .compliance-tab {
+        border: 0;
+        background: transparent;
+        color: var(--pm-text-muted);
+        padding: 12px 14px;
+        font-size: 13px;
+        font-weight: 800;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: .2s ease;
+    }
+
+    .compliance-tab span {
+        margin-left: 5px;
+        padding: 2px 6px;
+        border-radius: 999px;
+        background: rgba(255,255,255,.06);
+        font-size: 10px;
+    }
+
+    .compliance-tab:hover,
+    .compliance-tab.active {
+        color: var(--pm-text);
+        border-bottom-color: var(--pm-emerald-400);
+    }
+
+    .compliance-filters {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .search-box {
+        min-width: 240px;
+        height: 42px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 12px;
+        background: var(--pm-surface);
+        border: 1px solid var(--pm-border);
+        border-radius: var(--pm-radius-md);
+    }
+
+    .search-box span {
+        color: var(--pm-text-dim);
+        font-size: 18px;
+    }
+
+    .search-box input {
+        width: 100%;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--pm-text);
+        font-size: 13px;
+    }
+
+    .compliance-select {
+        min-height: 42px;
+        border: 1px solid var(--pm-border);
+        border-radius: var(--pm-radius-md);
+        background: var(--pm-surface);
+        color: var(--pm-text-soft);
+        padding: 0 11px;
+        outline: none;
+        font-size: 12px;
+    }
+
+    .document-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 340px;
+        gap: 20px;
+    }
+
+    .document-main {
+        min-width: 0;
+    }
+
+    .section-title-row,
+    .panel-heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 15px;
+        margin-bottom: 14px;
+    }
+
+    .section-title-row h2,
+    .panel-heading h2 {
+        margin: 4px 0 0;
+        color: var(--pm-text);
+        font-size: 23px;
+        letter-spacing: -.02em;
+    }
+
+    .panel-heading p {
+        margin: 6px 0 0;
+        color: var(--pm-text-muted);
+        font-size: 14px;
+    }
+
+    .small-action {
+        border: 1px solid var(--pm-border);
+        background: var(--pm-surface);
+        color: var(--pm-text-soft);
+        padding: 9px 12px;
+        border-radius: var(--pm-radius-sm);
+        font-size: 12px;
+        font-weight: 800;
+        cursor: pointer;
+    }
+
+    .document-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 13px;
+    }
+
+    .document-card {
+        min-width: 0;
+        overflow: hidden;
+        border-radius: var(--pm-radius-lg);
+        border: 1px solid var(--pm-border);
+        background: rgba(3, 27, 23, .74);
+        transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+    }
+
+    .document-card:hover {
+        transform: translateY(-2px);
+        border-color: var(--pm-border-strong);
+        box-shadow: var(--pm-shadow-sm);
+    }
+
+    .document-card-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px 15px 0;
+    }
+
+    .document-icon {
+        width: 39px;
+        height: 39px;
+        border-radius: 11px;
+        display: grid;
+        place-items: center;
+        font-size: 10px;
+        font-weight: 900;
+        border: 1px solid transparent;
+    }
+
+    .document-icon.green {
+        color: var(--pm-success);
+        background: var(--pm-success-bg);
+    }
+
+    .document-icon.blue {
+        color: var(--pm-info);
+        background: var(--pm-info-bg);
+    }
+
+    .document-icon.cyan,
+    .document-icon.teal {
+        color: var(--pm-teal);
+        background: rgba(45,212,191,.12);
+    }
+
+    .document-icon.yellow,
+    .document-icon.orange {
+        color: var(--pm-warning);
+        background: var(--pm-warning-bg);
+    }
+
+    .document-icon.red {
+        color: var(--pm-danger);
+        background: var(--pm-danger-bg);
+    }
+
+    .document-icon.purple {
+        color: #c4b5fd;
+        background: rgba(139,92,246,.13);
+    }
+
+    .document-icon.gray {
+        color: var(--pm-text-muted);
+        background: rgba(255,255,255,.06);
+    }
+
+    .document-status {
+        border-radius: 999px;
+        padding: 5px 8px;
         font-size: 9px;
         font-weight: 900;
-        background: #075e54;
-        color: #99f6e4
-      }
+        letter-spacing: .08em;
+    }
 
-      .pm-badge.warn {
-        background: #713f12;
-        color: #fde68a
-      }
+    .document-status.valid {
+        color: var(--pm-success);
+        background: var(--pm-success-bg);
+    }
 
-      .pm-badge.danger {
-        background: #7f1d1d;
-        color: #fecaca
-      }
+    .document-status.warning {
+        color: var(--pm-warning);
+        background: var(--pm-warning-bg);
+    }
 
-      .pm-badge.info {
-        background: #164e63;
-        color: #a5f3fc
-      }
+    .document-status.danger {
+        color: var(--pm-danger);
+        background: var(--pm-danger-bg);
+    }
 
-      .pm-actions {
-        display: flex;
-        gap: 7px;
-        flex-wrap: wrap
-      }
+    .document-status.neutral {
+        color: var(--pm-text-muted);
+        background: rgba(255,255,255,.06);
+    }
 
-      .pm-progress {
-        height: 7px;
-        background: #022c22;
-        border-radius: 999px;
-        overflow: hidden
-      }
+    .document-card-content {
+        padding: 14px 15px 15px;
+    }
 
-      .pm-progress span {
+    .document-category {
         display: block;
-        height: 100%;
-        background: #10b981;
-        border-radius: 999px
-      }
+        color: var(--pm-text-dim);
+        font-size: 9px;
+        font-weight: 900;
+        letter-spacing: .12em;
+        margin-bottom: 6px;
+    }
 
-      .pm-list {
+    .document-card h3 {
+        margin: 0;
+        color: var(--pm-text);
+        font-size: 16px;
+        line-height: 1.3;
+    }
+
+    .document-card p {
+        margin: 6px 0 13px;
+        color: var(--pm-text-muted);
+        font-size: 12px;
+        line-height: 1.5;
+        min-height: 36px;
+    }
+
+    .document-number {
+        padding: 9px;
+        border-radius: 10px;
+        background: rgba(255,255,255,.025);
+        border: 1px solid var(--pm-border-soft);
+    }
+
+    .document-number strong {
+        display: block;
+        margin-top: 3px;
+        color: var(--pm-text-soft);
+        font-size: 12px;
+    }
+
+    .document-dates {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        margin-top: 10px;
+    }
+
+    .document-dates strong {
+        display: block;
+        margin-top: 4px;
+        color: var(--pm-text-soft);
+        font-size: 11px;
+    }
+
+    .date-good {
+        color: var(--pm-success) !important;
+    }
+
+    .date-warning {
+        color: var(--pm-warning) !important;
+    }
+
+    .date-danger {
+        color: var(--pm-danger) !important;
+    }
+
+    .document-card-footer {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        border-top: 1px solid var(--pm-border-soft);
+    }
+
+    .document-action {
+        border: 0;
+        border-right: 1px solid var(--pm-border-soft);
+        background: transparent;
+        color: var(--pm-text-muted);
+        min-height: 38px;
+        font-size: 11px;
+        font-weight: 800;
+        cursor: pointer;
+        transition: .2s ease;
+    }
+
+    .document-action:last-child {
+        border-right: 0;
+    }
+
+    .document-action:hover {
+        color: var(--pm-text);
+        background: rgba(255,255,255,.03);
+    }
+
+    .compliance-side {
         display: flex;
         flex-direction: column;
-        gap: 8px
-      }
+        gap: 13px;
+    }
 
-      .pm-item {
-        padding: 12px;
-        border: 1px solid rgba(255, 255, 255, .08);
-        border-radius: 10px;
-        background: rgba(7, 94, 84, .45)
-      }
+    .side-card {
+        border-radius: var(--pm-radius-lg);
+        padding: 17px;
+    }
 
-      .pm-map {
-        height: 430px;
-        border-radius: 12px;
-        overflow: hidden;
-        background: #0b3b31
-      }
+    .side-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+        margin-bottom: 13px;
+    }
 
-      .pm-empty {
-        padding: 38px;
-        text-align: center;
-        color: #a7f3d0
-      }
+    .side-card-header h3 {
+        margin: 4px 0 0;
+        color: var(--pm-text);
+        font-size: 15px;
+    }
 
-      .pm-stat {
-        padding: 15px
-      }
+    .alert-count {
+        min-width: 27px;
+        height: 27px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        color: var(--pm-warning);
+        background: var(--pm-warning-bg);
+        font-size: 11px;
+        font-weight: 900;
+    }
 
-      .pm-stat small {
-        color: #a7f3d0;
+    .alert-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .alert-item {
+        display: flex;
+        gap: 10px;
+        padding: 11px;
+        border-radius: 11px;
+        border: 1px solid var(--pm-border-soft);
+        background: rgba(0,0,0,.12);
+    }
+
+    .alert-item.warning {
+        border-color: rgba(251,191,36,.12);
+    }
+
+    .alert-icon {
+        width: 28px;
+        height: 28px;
+        border-radius: 9px;
+        display: grid;
+        place-items: center;
+        color: var(--pm-warning);
+        background: var(--pm-warning-bg);
+        font-weight: 900;
+        flex: 0 0 auto;
+    }
+
+    .alert-item strong,
+    .alert-item span,
+    .alert-item small {
+        display: block;
+    }
+
+    .alert-item strong {
+        color: var(--pm-text-soft);
+        font-size: 12px;
+    }
+
+    .alert-item span {
+        color: var(--pm-text-muted);
+        font-size: 11px;
+        margin-top: 3px;
+        line-height: 1.4;
+    }
+
+    .alert-item small {
+        color: var(--pm-text-dim);
+        margin-top: 5px;
         font-size: 10px;
-        text-transform: uppercase
-      }
+    }
 
-      @@media(max-width:1000px) {
-        .pm-sidebar {
-          display: none
+    .side-link {
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: var(--pm-teal);
+        padding: 11px 0 0;
+        text-align: left;
+        font-size: 11px;
+        font-weight: 800;
+        cursor: pointer;
+    }
+
+    .quick-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .quick-action {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 10px;
+        text-align: left;
+        border: 1px solid transparent;
+        background: transparent;
+        border-radius: 10px;
+        color: var(--pm-text-soft);
+        cursor: pointer;
+    }
+
+    .quick-action:hover {
+        background: rgba(255,255,255,.03);
+        border-color: var(--pm-border-soft);
+    }
+
+    .quick-action > span {
+        width: 30px;
+        height: 30px;
+        display: grid;
+        place-items: center;
+        border-radius: 9px;
+        background: rgba(16,185,129,.1);
+        color: var(--pm-emerald-400);
+        font-size: 14px;
+    }
+
+    .quick-action strong,
+    .quick-action small {
+        display: block;
+    }
+
+    .quick-action strong {
+        font-size: 12px;
+    }
+
+    .quick-action small {
+        color: var(--pm-text-dim);
+        font-size: 10px;
+        margin-top: 2px;
+    }
+
+    .category-summary {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .category-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: var(--pm-text-muted);
+        font-size: 11px;
+        text-transform: none;
+        letter-spacing: 0;
+    }
+
+    .category-row span {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .category-row strong {
+        color: var(--pm-text-soft);
+    }
+
+    .category-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+
+    .category-dot.green {
+        background: var(--pm-emerald-400);
+    }
+
+    .category-dot.purple {
+        background: #a78bfa;
+    }
+
+    .category-dot.red {
+        background: var(--pm-danger);
+    }
+
+    .category-dot.blue {
+        background: var(--pm-info);
+    }
+
+    .compliance-tab-panel {
+        display: none;
+    }
+
+    .compliance-tab-panel.active {
+        display: block;
+    }
+
+    .maintenance-grid,
+    .fault-summary {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 13px;
+        margin-bottom: 18px;
+    }
+
+    .maintenance-card {
+        border-radius: var(--pm-radius-lg);
+        padding: 20px;
+    }
+
+    .maintenance-card.highlight {
+        border-color: rgba(45,212,191,.25);
+        box-shadow: 0 0 35px rgba(45,212,191,.05);
+    }
+
+    .maintenance-card strong {
+        display: block;
+        margin-top: 9px;
+        color: var(--pm-text);
+        font-size: 27px;
+    }
+
+    .maintenance-card p {
+        margin: 3px 0 4px;
+        color: var(--pm-text-soft);
+        font-size: 13px;
+        font-weight: 800;
+    }
+
+    .maintenance-card small {
+        color: var(--pm-text-muted);
+        font-size: 11px;
+    }
+
+    .maintenance-progress {
+        height: 5px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: rgba(255,255,255,.06);
+        margin: 13px 0 7px;
+    }
+
+    .maintenance-progress div {
+        height: 100%;
+        border-radius: inherit;
+        background: var(--pm-emerald-400);
+    }
+
+    .records-card {
+        border-radius: var(--pm-radius-lg);
+        overflow: hidden;
+    }
+
+    .records-card-header {
+        padding: 18px;
+        border-bottom: 1px solid var(--pm-border-soft);
+    }
+
+    .records-card-header h3 {
+        margin: 4px 0 0;
+        color: var(--pm-text);
+        font-size: 16px;
+    }
+
+    .records-table-wrapper {
+        overflow-x: auto;
+    }
+
+    .records-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 820px;
+    }
+
+    .records-table th {
+        color: var(--pm-text-dim);
+        text-align: left;
+        font-size: 10px;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        padding: 12px 15px;
+        border-bottom: 1px solid var(--pm-border-soft);
+        white-space: nowrap;
+    }
+
+    .records-table td {
+        padding: 13px 15px;
+        color: var(--pm-text-soft);
+        font-size: 12px;
+        border-bottom: 1px solid rgba(255,255,255,.035);
+        white-space: nowrap;
+    }
+
+    .records-table tbody tr:hover {
+        background: rgba(255,255,255,.02);
+    }
+
+    .type-pill,
+    .priority-pill,
+    .table-status,
+    .note-tag {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 5px 8px;
+        font-size: 9px;
+        font-weight: 900;
+        letter-spacing: .05em;
+    }
+
+    .type-pill.green,
+    .table-status.good {
+        color: var(--pm-success);
+        background: var(--pm-success-bg);
+    }
+
+    .type-pill.blue {
+        color: var(--pm-info);
+        background: var(--pm-info-bg);
+    }
+
+    .table-status.warning,
+    .priority-pill.medium {
+        color: var(--pm-warning);
+        background: var(--pm-warning-bg);
+    }
+
+    .priority-pill.high {
+        color: var(--pm-danger);
+        background: var(--pm-danger-bg);
+    }
+
+    .priority-pill.low {
+        color: var(--pm-info);
+        background: var(--pm-info-bg);
+    }
+
+    .row-action {
+        width: 28px;
+        height: 28px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--pm-text-muted);
+        cursor: pointer;
+        font-size: 16px;
+    }
+
+    .row-action:hover {
+        background: rgba(255,255,255,.05);
+        color: var(--pm-text);
+    }
+
+    .fault-summary-card {
+        border-radius: var(--pm-radius-lg);
+        padding: 20px;
+    }
+
+    .fault-summary-card span,
+    .fault-summary-card small {
+        display: block;
+        color: var(--pm-text-muted);
+        font-size: 12px;
+    }
+
+    .fault-summary-card strong {
+        display: block;
+        margin: 5px 0;
+        color: var(--pm-text);
+        font-size: 30px;
+    }
+
+    .fault-summary-card.danger {
+        border-color: rgba(251,113,133,.2);
+    }
+
+    .fault-summary-card.warning {
+        border-color: rgba(251,191,36,.18);
+    }
+
+    .fault-summary-card.good {
+        border-color: rgba(52,211,153,.18);
+    }
+
+    .notes-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 13px;
+    }
+
+    .note-card {
+        border-radius: var(--pm-radius-lg);
+        padding: 17px;
+    }
+
+    .note-card-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .note-tag.blue {
+        color: var(--pm-info);
+        background: var(--pm-info-bg);
+    }
+
+    .note-tag.yellow {
+        color: var(--pm-warning);
+        background: var(--pm-warning-bg);
+    }
+
+    .note-tag.purple {
+        color: #c4b5fd;
+        background: rgba(139,92,246,.13);
+    }
+
+    .note-card h3 {
+        margin: 13px 0 7px;
+        color: var(--pm-text);
+        font-size: 15px;
+    }
+
+    .note-card p {
+        margin: 0;
+        color: var(--pm-text-muted);
+        font-size: 12px;
+        line-height: 1.6;
+        min-height: 58px;
+    }
+
+    .note-card footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 15px;
+        padding-top: 12px;
+        border-top: 1px solid var(--pm-border-soft);
+        color: var(--pm-text-dim);
+        font-size: 10px;
+    }
+
+    .history-card {
+        border-radius: var(--pm-radius-lg);
+        padding: 6px 18px;
+    }
+
+    .history-item {
+        display: grid;
+        grid-template-columns: 13px 1fr auto;
+        gap: 13px;
+        align-items: center;
+        padding: 18px 0;
+        border-bottom: 1px solid var(--pm-border-soft);
+    }
+
+    .history-item:last-child {
+        border-bottom: 0;
+    }
+
+    .history-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+    }
+
+    .history-dot.green {
+        background: var(--pm-success);
+    }
+
+    .history-dot.blue {
+        background: var(--pm-info);
+    }
+
+    .history-dot.orange {
+        background: var(--pm-warning);
+    }
+
+    .history-content strong,
+    .history-content span,
+    .history-content small {
+        display: block;
+    }
+
+    .history-content strong {
+        color: var(--pm-text);
+        font-size: 13px;
+    }
+
+    .history-content span {
+        color: var(--pm-text-muted);
+        margin-top: 3px;
+        font-size: 11px;
+    }
+
+    .history-content small {
+        color: var(--pm-text-dim);
+        margin-top: 4px;
+        font-size: 10px;
+    }
+
+    .history-action {
+        color: var(--pm-text-dim);
+        font-size: 9px;
+    }
+
+    .compliance-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+    }
+
+    .compliance-modal.open {
+        display: flex;
+    }
+
+    .modal-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 10, 8, .78);
+        backdrop-filter: blur(8px);
+    }
+
+    .compliance-modal-dialog {
+        position: relative;
+        width: min(850px, 100%);
+        max-height: calc(100vh - 40px);
+        overflow: auto;
+        border: 1px solid var(--pm-border-strong);
+        border-radius: 22px;
+        background: #031c18;
+        box-shadow: 0 30px 100px rgba(0,0,0,.5);
+        animation: complianceModalIn .2s ease;
+    }
+
+    @@keyframes complianceModalIn {
+        from {
+            opacity: 0;
+            transform: translateY(10px) scale(.99);
         }
 
-        .pm-grid-6,
-        .pm-grid-4,
-        .pm-grid-3,
-        .pm-grid-2 {
-          grid-template-columns: 1fr 1fr
+        to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+    }
+
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 15px;
+        padding: 20px 22px;
+        border-bottom: 1px solid var(--pm-border-soft);
+    }
+
+    .modal-header h2 {
+        margin: 4px 0 0;
+        color: var(--pm-text);
+        font-size: 21px;
+    }
+
+    .modal-close {
+        width: 35px;
+        height: 35px;
+        border: 1px solid var(--pm-border);
+        border-radius: 10px;
+        background: transparent;
+        color: var(--pm-text-muted);
+        font-size: 23px;
+        cursor: pointer;
+    }
+
+    .modal-body {
+        padding: 22px;
+    }
+
+    .form-section-title {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        margin: 0 0 13px;
+        color: var(--pm-text-soft);
+        font-size: 12px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: .1em;
+    }
+
+    .form-section-title span {
+        width: 24px;
+        height: 24px;
+        display: grid;
+        place-items: center;
+        border-radius: 7px;
+        color: var(--pm-emerald-400);
+        background: var(--pm-success-bg);
+        font-size: 9px;
+    }
+
+    .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0,1fr));
+        gap: 12px;
+        margin-bottom: 22px;
+    }
+
+    .form-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .form-field.full {
+        grid-column: 1 / -1;
+    }
+
+    .form-field input,
+    .form-field select,
+    .form-field textarea {
+        width: 100%;
+        border: 1px solid var(--pm-border);
+        border-radius: 10px;
+        background: rgba(0,0,0,.15);
+        color: var(--pm-text-soft);
+        padding: 11px 12px;
+        outline: none;
+        font: inherit;
+        font-size: 13px;
+    }
+
+    .form-field input:focus,
+    .form-field select:focus,
+    .form-field textarea:focus {
+        border-color: var(--pm-border-strong);
+        box-shadow: 0 0 0 3px rgba(16,185,129,.07);
+    }
+
+    .form-field textarea {
+        resize: vertical;
+    }
+
+    .upload-zone {
+        padding: 25px;
+        border: 1px dashed rgba(45,212,191,.28);
+        border-radius: 14px;
+        text-align: center;
+        background: rgba(16,185,129,.035);
+    }
+
+    .upload-icon {
+        width: 45px;
+        height: 45px;
+        display: grid;
+        place-items: center;
+        margin: 0 auto 9px;
+        border-radius: 13px;
+        background: var(--pm-success-bg);
+        color: var(--pm-emerald-400);
+        font-size: 21px;
+    }
+
+    .upload-zone strong,
+    .upload-zone span {
+        display: block;
+    }
+
+    .upload-zone strong {
+        color: var(--pm-text);
+        font-size: 13px;
+    }
+
+    .upload-zone > span {
+        color: var(--pm-text-muted);
+        margin: 4px 0 12px;
+        font-size: 11px;
+    }
+
+    .upload-button {
+        border: 1px solid var(--pm-border);
+        border-radius: 9px;
+        background: var(--pm-surface);
+        color: var(--pm-text-soft);
+        padding: 8px 12px;
+        font-size: 11px;
+        font-weight: 800;
+        cursor: pointer;
+    }
+
+    .selected-file {
+        margin-top: 9px;
+        color: var(--pm-emerald-400);
+        font-size: 11px;
+    }
+
+    .modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 15px 22px;
+        border-top: 1px solid var(--pm-border-soft);
+    }
+
+    .compliance-toast {
+        position: fixed;
+        right: 24px;
+        bottom: 24px;
+        z-index: 1200;
+        min-width: 300px;
+        max-width: 430px;
+        display: flex;
+        gap: 11px;
+        align-items: center;
+        padding: 14px 16px;
+        border: 1px solid var(--pm-border-strong);
+        border-radius: 14px;
+        background: #06251f;
+        box-shadow: var(--pm-shadow-md);
+        transform: translateY(20px);
+        opacity: 0;
+        pointer-events: none;
+        transition: .25s ease;
+    }
+
+    .compliance-toast.show {
+        transform: translateY(0);
+        opacity: 1;
+    }
+
+    .compliance-toast > span {
+        width: 31px;
+        height: 31px;
+        display: grid;
+        place-items: center;
+        border-radius: 9px;
+        color: var(--pm-success);
+        background: var(--pm-success-bg);
+        font-weight: 900;
+    }
+
+    .compliance-toast strong,
+    .compliance-toast span {
+        display: block;
+    }
+
+    .compliance-toast strong {
+        color: var(--pm-text);
+        font-size: 12px;
+    }
+
+    .compliance-toast div span {
+        color: var(--pm-text-muted);
+        margin-top: 2px;
+        font-size: 11px;
+    }
+
+    @@media (max-width: 1250px) {
+
+        .fleet-selector-card {
+            align-items: flex-start;
+            flex-direction: column;
         }
 
-        .pm-content {
-          padding: 15px
-        }
-      }
-
-      @@media(max-width:620px) {
-        .pm-header {
-          padding: 0 12px
+        .vehicle-quick-info {
+            width: 100%;
+            min-width: 0;
         }
 
-        .pm-header-actions .pm-btn:first-child {
-          display: none
+        .document-layout {
+            grid-template-columns: 1fr;
         }
 
-        .pm-grid-6,
-        .pm-grid-4,
-        .pm-grid-3,
-        .pm-grid-2 {
-          grid-template-columns: 1fr
+        .compliance-side {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            align-items: start;
         }
 
-        .pm-content {
-          padding: 10px
+        .compliance-health {
+            grid-template-columns: 1fr;
         }
-      }
-    </style>
-    <script>
-      // Pages are server-rendered and must remain independent from the legacy SPA renderer.
-      document.addEventListener('DOMContentLoaded', () => {
-        document.querySelectorAll('.pm-page a[href]').forEach(a => a.addEventListener('click', e => {
-          if (a.origin === location.origin) { e.stopPropagation(); }
-        }, true));
-      });
-    </script>
+    }
+
+    @@media (max-width: 950px) {
+
+        .pm-compliance-page {
+            padding: 24px 20px 55px;
+        }
+
+        .document-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .compliance-side {
+            grid-template-columns: 1fr;
+        }
+
+        .maintenance-grid,
+        .fault-summary,
+        .notes-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .vehicle-quick-info {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .compliance-toolbar {
+            align-items: stretch;
+        }
+
+        .compliance-filters {
+            width: 100%;
+        }
+
+        .search-box {
+            flex: 1;
+        }
+    }
+
+    @@media (max-width: 680px) {
+
+        .pm-compliance-page {
+            padding: 18px 13px 45px;
+        }
+
+        .compliance-header {
+            flex-direction: column;
+        }
+
+        .compliance-header-actions {
+            width: 100%;
+        }
+
+        .compliance-header-actions .compliance-btn {
+            flex: 1;
+        }
+
+        .fleet-selector-card,
+        .compliance-health {
+            padding: 17px;
+        }
+
+        .fleet-selector-row {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .vehicle-select {
+            min-width: 0;
+            width: 100%;
+        }
+
+        .vehicle-quick-info {
+            grid-template-columns: 1fr 1fr;
+            gap: 13px;
+        }
+
+        .health-main {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+
+        .health-stats {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .compliance-tabs {
+            width: 100%;
+            overflow-x: auto;
+            flex-wrap: nowrap;
+        }
+
+        .compliance-tab {
+            white-space: nowrap;
+        }
+
+        .compliance-filters {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .search-box {
+            grid-column: 1 / -1;
+            min-width: 0;
+        }
+
+        .compliance-select {
+            width: 100%;
+        }
+
+        .section-title-row,
+        .panel-heading {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+
+        .form-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .form-field.full {
+            grid-column: auto;
+        }
+
+        .modal-footer {
+            flex-direction: column-reverse;
+        }
+
+        .modal-footer .compliance-btn {
+            width: 100%;
+        }
+
+        .compliance-toast {
+            left: 13px;
+            right: 13px;
+            bottom: 13px;
+            min-width: 0;
+        }
+    }
+
+</style>
+
+<script>
+(function () {
+    "use strict";
+
+    const root = document.querySelector('[data-module="compliance"]');
+
+    if (!root) {
+        return;
+    }
+
+    const modal = document.getElementById("documentModal");
+    const form = document.getElementById("documentForm");
+    const vehicleSelect = document.getElementById("vehicleSelect");
+    const documentGrid = document.getElementById("documentGrid");
+    const searchInput = document.getElementById("documentSearch");
+    const statusFilter = document.getElementById("statusFilter");
+    const categoryFilter = document.getElementById("categoryFilter");
+    const fileInput = document.getElementById("documentFile");
+    const selectedFile = document.getElementById("selectedFile");
+
+    const toast = document.getElementById("complianceToast");
+    const toastTitle = document.getElementById("toastTitle");
+    const toastMessage = document.getElementById("toastMessage");
+
+    let toastTimer = null;
+
+    const vehicleData = {
+        "BG-TR-001": {
+            registration: "BG-TR-001",
+            vin: "WDB9634031L123456",
+            driver: "Marko Petrović",
+            meta: "BG · N3 · 40t · Euro 6 · 5 osovina · međunarodni transport",
+            status: "COMPLIANT",
+            statusClass: "good",
+            score: 91,
+            valid: 12,
+            warning: 2,
+            expired: 0,
+            documents: 14,
+            alerts: 2,
+            faults: 1,
+            service: "8.420 km",
+            lastCheck: "12.09.2026."
+        },
+
+        "BG-TR-002": {
+            registration: "BG-TR-002",
+            vin: "YV2RT40A7GB987321",
+            driver: "Nikola Jovanović",
+            meta: "BG · N3 · 40t · Euro 6 · 5 osovina · međunarodni transport",
+            status: "ATTENTION",
+            statusClass: "warning",
+            score: 84,
+            valid: 10,
+            warning: 3,
+            expired: 1,
+            documents: 14,
+            alerts: 4,
+            faults: 2,
+            service: "2.190 km",
+            lastCheck: "09.09.2026."
+        },
+
+        "BG-TR-003": {
+            registration: "BG-TR-003",
+            vin: "YS2R4X20002184721",
+            driver: "Stefan Ilić",
+            meta: "BG · N3 · 40t · Euro 6 · 5 osovina · međunarodni transport",
+            status: "COMPLIANT",
+            statusClass: "good",
+            score: 96,
+            valid: 14,
+            warning: 0,
+            expired: 0,
+            documents: 14,
+            alerts: 0,
+            faults: 0,
+            service: "14.100 km",
+            lastCheck: "11.09.2026."
+        },
+
+        "BG-TR-004": {
+            registration: "BG-TR-004",
+            vin: "WMA06XZZ8KM771921",
+            driver: "Milan Nikolić",
+            meta: "BG · N3 · 40t · Euro 6 · 5 osovina · domaći transport",
+            status: "ATTENTION",
+            statusClass: "warning",
+            score: 78,
+            valid: 9,
+            warning: 3,
+            expired: 2,
+            documents: 14,
+            alerts: 5,
+            faults: 3,
+            service: "1.250 km",
+            lastCheck: "03.09.2026."
+        },
+
+        "BG-TR-005": {
+            registration: "BG-TR-005",
+            vin: "XLRTE47MS0G823912",
+            driver: "Dejan Marković",
+            meta: "BG · N3 · 40t · Euro 6 · 5 osovina · međunarodni transport",
+            status: "COMPLIANT",
+            statusClass: "good",
+            score: 93,
+            valid: 13,
+            warning: 1,
+            expired: 0,
+            documents: 14,
+            alerts: 1,
+            faults: 1,
+            service: "9.700 km",
+            lastCheck: "10.09.2026."
+        },
+
+        "BG-TR-006": {
+            registration: "BG-TR-006",
+            vin: "WDB9634031L229812",
+            driver: "Vladimir Stojanović",
+            meta: "BG · N3 · 40t · Euro 6 · 5 osovina · međunarodni transport",
+            status: "COMPLIANT",
+            statusClass: "good",
+            score: 94,
+            valid: 13,
+            warning: 1,
+            expired: 0,
+            documents: 14,
+            alerts: 1,
+            faults: 1,
+            service: "11.400 km",
+            lastCheck: "08.09.2026."
+        },
+
+        "BG-TR-007": {
+            registration: "BG-TR-007",
+            vin: "YV2RT40A8GB231881",
+            driver: "Aleksandar Pavlović",
+            meta: "BG · N3 · 40t · Euro 6 · 5 osovina · međunarodni transport",
+            status: "ATTENTION",
+            statusClass: "warning",
+            score: 88,
+            valid: 11,
+            warning: 2,
+            expired: 1,
+            documents: 14,
+            alerts: 3,
+            faults: 1,
+            service: "4.500 km",
+            lastCheck: "07.09.2026."
+        },
+
+        "BG-TR-008": {
+            registration: "BG-TR-008",
+            vin: "YS2R4X20002199312",
+            driver: "Nenad Simić",
+            meta: "BG · N3 · 40t · Euro 6 · 5 osovina · međunarodni transport",
+            status: "COMPLIANT",
+            statusClass: "good",
+            score: 98,
+            valid: 14,
+            warning: 0,
+            expired: 0,
+            documents: 14,
+            alerts: 0,
+            faults: 0,
+            service: "17.800 km",
+            lastCheck: "14.09.2026."
+        }
+    };
+
+    function showToast(title, message) {
+        toastTitle.textContent = title;
+        toastMessage.textContent = message;
+
+        toast.classList.add("show");
+
+        clearTimeout(toastTimer);
+
+        toastTimer = setTimeout(function () {
+            toast.classList.remove("show");
+        }, 3200);
+    }
+
+    function updateVehicle() {
+        const id = vehicleSelect.value;
+        const data = vehicleData[id];
+
+        if (!data) {
+            return;
+        }
+
+        document.getElementById("vehicleRegistration").textContent = data.registration;
+        document.getElementById("vehicleVin").textContent = data.vin;
+        document.getElementById("vehicleDriver").textContent = data.driver;
+        document.getElementById("vehicleLastCheck").textContent = data.lastCheck;
+        document.getElementById("vehicleMeta").textContent = data.meta;
+
+        const vehicleStatus = document.getElementById("vehicleStatus");
+
+        vehicleStatus.textContent = data.status;
+        vehicleStatus.className = "vehicle-status-chip " + data.statusClass;
+
+        document.getElementById("complianceScore").textContent = data.score + "%";
+        document.getElementById("healthGood").textContent = data.valid + " važećih";
+        document.getElementById("healthWarning").textContent = data.warning + " uskoro ističe";
+        document.getElementById("healthDanger").textContent = data.expired + " isteklih";
+
+        document.getElementById("statDocuments").textContent = data.documents;
+        document.getElementById("statAlerts").textContent = data.alerts;
+        document.getElementById("statService").textContent = data.service;
+        document.getElementById("statFaults").textContent = data.faults;
+        document.getElementById("documentsCount").textContent = data.documents;
+        document.getElementById("sideAlertCount").textContent = data.alerts;
+
+        const healthTitle = document.getElementById("healthTitle");
+        const healthDescription = document.getElementById("healthDescription");
+
+        if (data.expired > 0) {
+            healthTitle.textContent = "Potrebna je intervencija";
+            healthDescription.textContent =
+                "Za vozilo postoje dokumenti kojima je istekao rok ili zahtevaju hitno ažuriranje.";
+        } else if (data.warning > 0) {
+            healthTitle.textContent = "Dokumentacija je uglavnom uredna";
+            healthDescription.textContent =
+                "Postoje dokumenti kojima se približava rok kontrole ili isteka.";
+        } else {
+            healthTitle.textContent = "Dokumentacija je uredna";
+            healthDescription.textContent =
+                "Za izabrano vozilo trenutno nema otvorenih compliance problema.";
+        }
+
+        const circumference = 2 * Math.PI * 48;
+        const offset = circumference - (data.score / 100) * circumference;
+        const ring = document.getElementById("healthRing");
+
+        ring.style.strokeDasharray = circumference;
+        ring.style.strokeDashoffset = offset;
+    }
+
+    function openModal(mode, documentId) {
+        modal.classList.add("open");
+        modal.setAttribute("aria-hidden", "false");
+
+        if (mode === "edit" && documentId) {
+            document.getElementById("modalKicker").textContent = "DOCUMENT · EDIT";
+            document.getElementById("modalTitle").textContent = "Izmena dokumenta";
+            document.getElementById("documentId").value = documentId;
+
+            const card = document.querySelector(
+                '.document-card[data-document-id="' + documentId + '"]'
+            );
+
+            if (card) {
+                const title = card.querySelector("h3");
+
+                if (title) {
+                    document.getElementById("documentType").value = title.textContent.trim();
+                }
+            }
+        } else {
+            document.getElementById("modalKicker").textContent = "DOCUMENT · NEW";
+            document.getElementById("modalTitle").textContent = "Novi dokument";
+            document.getElementById("documentId").value = "";
+
+            form.reset();
+            selectedFile.textContent = "";
+        }
+    }
+
+    function closeModal() {
+        modal.classList.remove("open");
+        modal.setAttribute("aria-hidden", "true");
+    }
+
+    function filterDocuments() {
+        const query = searchInput.value.trim().toLowerCase();
+        const status = statusFilter.value;
+        const category = categoryFilter.value;
+
+        const cards = document.querySelectorAll(".document-card");
+
+        cards.forEach(function (card) {
+            const cardSearch = (card.dataset.search || "").toLowerCase();
+            const cardStatus = card.dataset.status || "";
+            const cardCategory = card.dataset.category || "";
+
+            const matchesQuery =
+                !query || cardSearch.includes(query);
+
+            const matchesStatus =
+                status === "all" || cardStatus === status;
+
+            const matchesCategory =
+                category === "all" || cardCategory === category;
+
+            card.style.display =
+                matchesQuery && matchesStatus && matchesCategory
+                    ? ""
+                    : "none";
+        });
+    }
+
+    document.querySelectorAll(".compliance-tab").forEach(function (tab) {
+        tab.addEventListener("click", function () {
+            const target = tab.dataset.tab;
+
+            document.querySelectorAll(".compliance-tab").forEach(function (item) {
+                item.classList.remove("active");
+            });
+
+            document.querySelectorAll(".compliance-tab-panel").forEach(function (panel) {
+                panel.classList.remove("active");
+            });
+
+            tab.classList.add("active");
+
+            const panel = document.querySelector(
+                '.compliance-tab-panel[data-panel="' + target + '"]'
+            );
+
+            if (panel) {
+                panel.classList.add("active");
+            }
+        });
+    });
+
+    vehicleSelect.addEventListener("change", function () {
+        updateVehicle();
+
+        showToast(
+            "Vozilo promenjeno",
+            "Prikazana je compliance evidencija za " + vehicleSelect.value + "."
+        );
+    });
+
+    searchInput.addEventListener("input", filterDocuments);
+    statusFilter.addEventListener("change", filterDocuments);
+    categoryFilter.addEventListener("change", filterDocuments);
+
+    document.getElementById("addDocumentBtn").addEventListener("click", function () {
+        openModal("new");
+    });
+
+    document.getElementById("uploadDocumentBtn").addEventListener("click", function () {
+        openModal("new");
+    });
+
+    document.querySelectorAll(".edit-document").forEach(function (button) {
+        button.addEventListener("click", function () {
+            openModal("edit", button.dataset.id);
+        });
+    });
+
+    document.querySelectorAll(".view-document").forEach(function (button) {
+        button.addEventListener("click", function () {
+            const card = document.querySelector(
+                '.document-card[data-document-id="' + button.dataset.id + '"]'
+            );
+
+            const title = card
+                ? card.querySelector("h3")
+                : null;
+
+            showToast(
+                "Uvid u dokument",
+                title
+                    ? title.textContent.trim()
+                    : "Dokument je otvoren."
+            );
+        });
+    });
+
+    document.querySelectorAll(".file-document").forEach(function (button) {
+        button.addEventListener("click", function () {
+            showToast(
+                "Dokument",
+                "UI je spreman za povezivanje sa skladištem dokumenata."
+            );
+        });
+    });
+
+    document.querySelectorAll("[data-close-modal]").forEach(function (element) {
+        element.addEventListener("click", closeModal);
+    });
+
+    document.getElementById("chooseFile").addEventListener("click", function () {
+        fileInput.click();
+    });
+
+    fileInput.addEventListener("change", function () {
+        if (!fileInput.files.length) {
+            selectedFile.textContent = "";
+            return;
+        }
+
+        selectedFile.textContent =
+            "Izabran fajl: " + fileInput.files[0].name;
+    });
+
+    document.getElementById("documentForm").addEventListener("submit", function (event) {
+        event.preventDefault();
+
+        const type = document.getElementById("documentType").value;
+
+        if (!type) {
+            showToast(
+                "Nedostaje podatak",
+                "Izaberi vrstu dokumenta."
+            );
+
+            return;
+        }
+
+        closeModal();
+
+        showToast(
+            "Dokument sačuvan",
+            type + " je uspešno evidentiran za " + vehicleSelect.value + "."
+        );
+    });
+
+    document.getElementById("refreshCompliance").addEventListener("click", function () {
+        updateVehicle();
+
+        showToast(
+            "Compliance osvežen",
+            "Podaci za " + vehicleSelect.value + " su osveženi."
+        );
+    });
+
+    document.getElementById("showAllAlerts").addEventListener("click", function () {
+        showToast(
+            "Alert centar",
+            "Ovde će biti prikazani svi aktivni compliance alerti."
+        );
+    });
+
+    document.querySelectorAll(".quick-action").forEach(function (button) {
+        button.addEventListener("click", function () {
+            const action = button.dataset.action;
+
+            if (action === "add") {
+                openModal("new");
+                return;
+            }
+
+            if (action === "service") {
+                document.querySelector('[data-tab="maintenance"]').click();
+                showToast(
+                    "Održavanje",
+                    "Otvoren je modul za servisnu evidenciju."
+                );
+                return;
+            }
+
+            if (action === "repair") {
+                document.querySelector('[data-tab="repairs"]').click();
+                showToast(
+                    "Popravke",
+                    "Otvoren je modul za popravke."
+                );
+                return;
+            }
+
+            if (action === "fault") {
+                document.querySelector('[data-tab="faults"]').click();
+                showToast(
+                    "Greške",
+                    "Otvoren je modul za greške vozila."
+                );
+                return;
+            }
+
+            if (action === "note") {
+                document.querySelector('[data-tab="notes"]').click();
+                showToast(
+                    "Napomene",
+                    "Otvoren je modul za napomene."
+                );
+            }
+        });
+    });
+
+    document.getElementById("addMaintenanceBtn").addEventListener("click", function () {
+        showToast(
+            "Novi servis",
+            "Forma za unos servisa je spremna za povezivanje sa modelom."
+        );
+    });
+
+    document.getElementById("addRepairBtn").addEventListener("click", function () {
+        showToast(
+            "Nova popravka",
+            "Forma za unos popravke je spremna za povezivanje sa modelom."
+        );
+    });
+
+    document.getElementById("addFaultBtn").addEventListener("click", function () {
+        showToast(
+            "Nova greška",
+            "Forma za prijavu greške je spremna za povezivanje sa modelom."
+        );
+    });
+
+    document.getElementById("addNoteBtn").addEventListener("click", function () {
+        showToast(
+            "Nova napomena",
+            "Forma za unos napomene je spremna za povezivanje sa modelom."
+        );
+    });
+
+    updateVehicle();
+
+})();
+</script>
