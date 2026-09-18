@@ -3,6 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>807d07dd-f204-41e9-93fc-fbeb1706f1b6</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />

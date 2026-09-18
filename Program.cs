@@ -13,13 +13,9 @@ var builder = WebApplication.CreateBuilder(args);
 // ============================================================
 
 builder.Services.AddControllers();
-
 builder.Services.AddRazorPages();
-
 builder.Services.AddProblemDetails();
-
 builder.Services.AddHttpContextAccessor();
-
 builder.Services.AddSignalR();
 
 
@@ -27,9 +23,7 @@ builder.Services.AddSignalR();
 // DATABASE CONNECTION
 // ============================================================
 
-var connectionString =
-    builder.Configuration.GetConnectionString("Postgres");
-
+var connectionString = builder.Configuration.GetConnectionString("Postgres");
 if (string.IsNullOrWhiteSpace(connectionString))
 {
     throw new InvalidOperationException(
@@ -100,24 +94,30 @@ builder.Services
 // APPLICATION SERVICES
 // ============================================================
 
-builder.Services.AddScoped<
-    ICurrentUserContext,
-    CurrentUserContext
->();
-
-builder.Services.AddScoped<
-    IUserClaimsPrincipalFactory<ApplicationUser>,
-    IdentityClaimsFactory
->();
-
+builder.Services.AddScoped<ICurrentUserContext, CurrentUserContext>();
+builder.Services.AddScoped<IUserClaimsPrincipalFactory<ApplicationUser>,IdentityClaimsFactory>();
 builder.Services.AddScoped<BusinessService>();
+
+/**************************************************************/
+// MEMORY CACHE
+
+builder.Services.AddMemoryCache(options =>
+{
+    options.SizeLimit = 128 * 1024 * 1024;
+});
+
 
 
 // ============================================================
 // HTTP CLIENT FACTORY
 // ============================================================
 
-builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("MapTiles", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(8);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("ProMapCargo/1.0 map-tile-proxy");
+});
+
 
 
 // ============================================================
@@ -165,11 +165,7 @@ builder.Services.AddHttpClient<
 //
 // ============================================================
 
-builder.Services.AddHttpClient<
-    IRoutingService,
-    OsrmRoutingService
->(
-    client =>
+builder.Services.AddHttpClient<IRoutingService, OsrmRoutingService>(client =>
     {
         client.Timeout =
             TimeSpan.FromSeconds(30);
@@ -191,20 +187,9 @@ builder.Services.AddHttpClient<
 // ROAD RESTRICTIONS
 // ============================================================
 
-builder.Services.AddScoped<
-    IPostgresRestrictionRepository,
-    PostgresRestrictionRepository
->();
-
-builder.Services.AddScoped<
-    IRestrictionEngine,
-    PostgresRestrictionEngine
->();
-
-builder.Services.AddSingleton<
-    IRestrictionRepository,
-    JsonRestrictionRepository
->();
+builder.Services.AddScoped<IPostgresRestrictionRepository, PostgresRestrictionRepository>();
+builder.Services.AddScoped<IRestrictionEngine, PostgresRestrictionEngine>();
+builder.Services.AddSingleton<IRestrictionRepository, JsonRestrictionRepository>();
 
 
 // ============================================================
@@ -235,52 +220,30 @@ builder.Services.AddSingleton<
 //
 // ============================================================
 
-builder.Services.AddScoped<
-    PostGisRoutingRepository
->();
+builder.Services.AddScoped<PostGisRoutingRepository>();
 
-builder.Services.AddScoped<
-    TurnRestrictionMatcher
->();
+builder.Services.AddScoped<TurnRestrictionMatcher>();
 
-builder.Services.AddScoped<
-    ManeuverBuilder
->();
+builder.Services.AddScoped<ManeuverBuilder>();
 
-builder.Services.AddScoped<
-    TruckEdgeEvaluator
->();
+builder.Services.AddScoped<TruckEdgeEvaluator>();
 
-builder.Services.AddScoped<
-    EdgeSnapper
->();
+builder.Services.AddScoped<EdgeSnapper>();
 
-builder.Services.AddScoped<
-    PostGisAStarRouter
->();
+builder.Services.AddScoped<PostGisAStarRouter>();
 
-builder.Services.AddScoped<
-    IPostGisRoutingService,
-    PostGisRoutingService
->();
+builder.Services.AddScoped<IPostGisRoutingService, PostGisRoutingService>();
 
 
 // ============================================================
 // CORS
 // ============================================================
 
-var corsOrigins =
-    builder.Configuration
-        .GetSection("Cors:Origins")
-        .Get<string[]>()
-    ?? Array.Empty<string>();
-
-builder.Services.AddCors(
-    options =>
-    {
-        options.AddPolicy(
-            "Frontend",
-            policy =>
+var corsOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? Array.Empty<string>();
+builder.Services.AddCors(options => {
+    options.AddPolicy(
+        "Frontend",
+        policy =>
             {
                 if (corsOrigins.Length == 0)
                 {
@@ -357,7 +320,7 @@ app.MapControllers();
 // SIGNALR
 // ============================================================
 
-app.MapHub<NavigationHub>(    "/hubs/navigation");
+app.MapHub<NavigationHub>("/hubs/navigation");
 
 
 // ============================================================
@@ -371,9 +334,7 @@ app.MapRazorPages();
 // HEALTH CHECK
 // ============================================================
 
-app.MapGet(
-    "/health",
-    () =>
+app.MapGet("/health", () =>
         Results.Ok(
             new
             {
@@ -389,7 +350,7 @@ app.MapGet(
 // FALLBACK
 // ============================================================
 
-app.MapFallbackToPage(    "/Index");
+app.MapFallbackToPage("/Index");
 
 
 // ============================================================

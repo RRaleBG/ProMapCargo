@@ -7,39 +7,55 @@
         proxyTemplate: "/api/map/tiles/{layer}/{z}/{x}/{y}.png",
         configUrl: "/api/map/config",
         defaultBase: "dark",
-        lazy: true,
         maxZoom: 19
     };
 
-    const layerDefinitions = new Map();
+    const OSM_LIGHT = {
+        id: "osm-light",
+        label: "OSM Light",
+        type: "base",
+        maxZoom: 19,
+        url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        attribution: "© OpenStreetMap contributors"
+    };
+
+    const CARTO_DARK = {
+        id: "carto-dark",
+        label: "Dark Map",
+        type: "base",
+        maxZoom: 20,
+        url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+        attribution: "© OpenStreetMap contributors © CARTO",
+        subdomains: "abcd"
+    };
+
+    const definitions = new Map();
     let configPromise = null;
 
-    function getRoot() {
-        return document.querySelector("[data-map-layers]") || document.body;
+    function rootElement(root) {
+        return root || document.querySelector("[data-map-layers]") || document.body;
     }
 
-    function readOptions(root = getRoot()) {
+    function optionsFrom(root) {
         return {
             proxyTemplate: root.dataset.mapProxy || DEFAULTS.proxyTemplate,
             configUrl: root.dataset.mapConfig || DEFAULTS.configUrl,
-            defaultBase: root.dataset.mapDefaultBase || DEFAULTS.defaultBase,
-            lazy: root.dataset.mapLazy !== "false",
+            defaultBase: (root.dataset.mapDefaultBase || DEFAULTS.defaultBase).toLowerCase(),
             maxZoom: Number(root.dataset.mapMaxZoom || DEFAULTS.maxZoom)
         };
     }
 
     async function loadConfig(url) {
         if (!configPromise) {
-            configPromise = fetch(url, {
+            configPromise = fetch(url || DEFAULTS.configUrl, {
                 method: "GET",
                 headers: { Accept: "application/json" },
                 credentials: "same-origin",
                 cache: "no-store"
             }).then(async response => {
                 if (!response.ok) {
-                    throw new Error(`Map config HTTP ${response.status}`);
+                    throw new Error(`Map configuration HTTP ${response.status}`);
                 }
-
                 return response.json();
             }).catch(error => {
                 configPromise = null;
@@ -50,7 +66,7 @@
         return configPromise;
     }
 
-    function proxyUrl(template, layer, coords) {
+    function proxyTemplateUrl(template, layer, coords) {
         return template
             .replace("{layer}", encodeURIComponent(layer))
             .replace("{z}", String(coords.z))
@@ -58,48 +74,45 @@
             .replace("{y}", String(coords.y));
     }
 
-    function createTileLayer(layer, options) {
-        if (!window.L) {
-            throw new Error("Leaflet nije učitan.");
-        }
+    function proxyLayer(definition, options) {
+        const maxZoom = Math.min(
+            Number(definition.maxZoom || options.maxZoom),
+            options.maxZoom
+        );
 
-        const definition = layerDefinitions.get(layer);
-        if (!definition) {
-            throw new Error(`Map layer '${layer}' nije konfigurisan.`);
-        }
-
-        const tile = L.tileLayer(options.proxyTemplate, {
-            maxZoom: definition.id === "satellite" ? 19 : options.maxZoom,
-            maxNativeZoom: definition.id === "satellite" ? 19 : options.maxZoom,
+        const layer = L.tileLayer(options.proxyTemplate, {
+            maxZoom,
+            maxNativeZoom: maxZoom,
             tileSize: 256,
             updateWhenIdle: true,
             updateWhenZooming: false,
             keepBuffer: 1,
-            crossOrigin: true,
-            attribution: definition.id === "satellite"
-                ? "Tiles © Esri"
-                : "TomTom"
+            attribution: definition.attribution || "TomTom"
         });
 
-        tile.getTileUrl = function(coords) {
-            return proxyUrl(options.proxyTemplate, definition.id, coords);
-        };
+        layer.getTileUrl = coords =>
+            proxyTemplateUrl(options.proxyTemplate, definition.id, coords);
 
-        return tile;
+        return layer;
     }
 
-    async function prepare(options) {
-        const config = await loadConfig(options.configUrl);
+    function externalLayer(definition) {
+        return L.tileLayer(definition.url, {
+            maxZoom: Number(definition.maxZoom || 19),
+            maxNativeZoom: Number(definition.maxZoom || 19),
+            tileSize: 256,
+            updateWhenIdle: true,
+            updateWhenZooming: false,
+            keepBuffer: 1,
+            subdomains: definition.subdomains || undefined,
+            attribution: definition.attribution || ""
+        });
+    }
 
-        layerDefinitions.clear();
-
-        for (const layer of config.layers || []) {
-            if (layer?.id && layer.enabled) {
-                layerDefinitions.set(layer.id, layer);
-            }
-        }
-
-        return config;
+    function build(definition, options) {
+        return definition.url
+            ? externalLayer(definition)
+            : proxyLayer(definition, options);
     }
 
     async function attach(map, userOptions = {}) {
@@ -107,96 +120,139 @@
             return null;
         }
 
-        const root = userOptions.root || getRoot();
-        const options = { ...readOptions(root), ...userOptions };
+        const root = rootElement(userOptions.root);
+        const options = {
+            ...optionsFrom(root),
+            ...userOptions
+        };
 
         let config;
+
         try {
-            config = await prepare(options);
+            config = await loadConfig(options.configUrl);
         } catch (error) {
             console.warn("ProMap map configuration unavailable.", error);
-            return null;
+            config = { layers: [] };
+        }
+
+        definitions.clear();
+        definitions.set(OSM_LIGHT.id, OSM_LIGHT);
+        definitions.set(CARTO_DARK.id, CARTO_DARK);
+
+        for (const definition of config.layers || []) {
+            if (definition?.id) {
+                definitions.set(String(definition.id).toLowerCase(), definition);
+            }
         }
 
         const base = {};
         const overlays = {};
         const created = {};
 
+        const addBase = definition => {
+            const label = definition.label || definition.id;
+
+            if (!created[definition.id]) {
+                created[definition.id] = build(definition, options);
+            }
+
+            base[label] = created[definition.id];
+        };
+
+        addBase(OSM_LIGHT);
+
         for (const definition of config.layers || []) {
-            if (!definition?.id || !definition.enabled) {
+            if (definition?.enabled && definition.type === "base") {
+                addBase(definition);
+            }
+        }
+
+        if (!base["Dark Map"]) {
+            addBase(CARTO_DARK);
+        }
+
+        for (const definition of config.layers || []) {
+            if (!definition?.enabled || definition.type !== "overlay") {
                 continue;
             }
 
-            const create = () => {
-                if (!created[definition.id]) {
-                    created[definition.id] = createTileLayer(definition.id, options);
+            const label = definition.label || definition.id;
+            let tile = null;
+
+            overlays[label] = L.layerGroup();
+
+            overlays[label].on("add", () => {
+                if (!tile) {
+                    tile = build(definition, options);
+                    created[definition.id] = tile;
                 }
-                return created[definition.id];
-            };
 
-            if (definition.type === "overlay") {
-                overlays[definition.label || definition.id] = L.layerGroup();
-                overlays[definition.label || definition.id].on("add", () => {
-                    const tile = create();
-                    if (!map.hasLayer(tile)) {
-                        tile.addTo(map);
-                    }
-                });
-                overlays[definition.label || definition.id].on("remove", () => {
-                    const tile = created[definition.id];
-                    if (tile && map.hasLayer(tile)) {
-                        map.removeLayer(tile);
-                    }
-                });
-            } else {
-                base[definition.label || definition.id] = create();
-            }
+                if (!map.hasLayer(tile)) {
+                    tile.addTo(map);
+                }
+            });
+
+            overlays[label].on("remove", () => {
+                if (tile && map.hasLayer(tile)) {
+                    map.removeLayer(tile);
+                }
+            });
         }
 
-        const defaultDefinition = config.layers?.find(
-            x => x.id === options.defaultBase && x.enabled && x.type === "base"
-        ) || config.layers?.find(x => x.enabled && x.type === "base");
+        let selected = null;
+        const wanted = options.defaultBase;
 
-        if (defaultDefinition) {
-            const defaultLayer = base[defaultDefinition.label || defaultDefinition.id];
-            defaultLayer?.addTo(map);
+        if (wanted === "osm" || wanted === "osm-light") {
+            selected = base["OSM Light"];
+        } else if (wanted === "dark" || wanted === "tomtom-dark") {
+            selected = base["TomTom Dark"] || base["Dark Map"];
+        } else if (wanted === "satellite") {
+            selected = base["Satellite"];
         }
 
-        if (Object.keys(base).length || Object.keys(overlays).length) {
-            L.control.layers(base, overlays, {
-                collapsed: true,
-                position: "topright"
-            }).addTo(map);
+        selected ||= Object.values(base)[0] || null;
+
+        if (selected) {
+            selected.addTo(map);
         }
 
-        return {
-            base,
-            overlays,
-            created,
-            config
-        };
+        const control = L.control.layers(base, overlays, {
+            collapsed: true,
+            position: "topright"
+        }).addTo(map);
+
+        return { base, overlays, created, config, control };
     }
 
-    function addConfiguredLayer(map, collection, id) {
-        if (!collection || !map) {
-            return false;
+    function getLayer(collection, id) {
+        if (!collection) {
+            return null;
         }
 
-        for (const [label, layer] of Object.entries(collection)) {
-            const definition = layerDefinitions.get(id);
-            if (definition && (label === definition.label || label === id)) {
-                layer.addTo(map);
-                return true;
+        const wanted = String(id).toLowerCase();
+        const definition = definitions.get(wanted);
+
+        if (definition) {
+            const label = definition.label || definition.id;
+            if (collection[label]) {
+                return collection[label];
             }
         }
 
-        return false;
+        return Object.entries(collection)
+            .find(([label]) => label.toLowerCase() === wanted)?.[1] || null;
     }
 
     window.ProMap.MapLayers = {
         attach,
         loadConfig,
-        createTileLayer,
-        addConfiguredLayer
+        getLayer,
+        createTileLayer(definition, options = optionsFrom(rootElement())) {
+            if (!window.L) {
+                throw new Error("Leaflet nije učitan.");
+            }
+
+            return build(definition, options);
+        }
     };
 })();
