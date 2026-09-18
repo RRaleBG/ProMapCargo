@@ -147,20 +147,22 @@
         </div>
     </div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js" defer></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js" defer></script>
 
-    <script src="~/js/core/dom.js" asp-append-version="true" defer></script>
-    <script src="~/js/core/events.js" asp-append-version="true" defer></script>
-    <script src="~/js/core/http.js" asp-append-version="true" defer></script>
-    <script src="~/js/core/format.js" asp-append-version="true" defer></script>
-    <script src="~/js/core/validation.js" asp-append-version="true" defer></script>
-    <script src="~/js/core/toast.js" asp-append-version="true" defer></script>
-    <script src="~/js/core/modal.js" asp-append-version="true" defer></script>
-    <script src="~/js/core/compat.js" asp-append-version="true" defer></script>
-    <script src="~/js/services/alerts.js" asp-append-version="true" defer></script>
-    <script src="~/js/app.js" asp-append-version="true" defer></script>
+<script src="~/js/promap-map-layers.js" asp-append-version="true" defer></script>
 
-    @await RenderSectionAsync("Scripts", required: false)
+<script src="~/js/core/dom.js" asp-append-version="true" defer></script>
+<script src="~/js/core/events.js" asp-append-version="true" defer></script>
+<script src="~/js/core/http.js" asp-append-version="true" defer></script>
+<script src="~/js/core/format.js" asp-append-version="true" defer></script>
+<script src="~/js/core/validation.js" asp-append-version="true" defer></script>
+<script src="~/js/core/toast.js" asp-append-version="true" defer></script>
+<script src="~/js/core/modal.js" asp-append-version="true" defer></script>
+<script src="~/js/core/compat.js" asp-append-version="true" defer></script>
+<script src="~/js/services/alerts.js" asp-append-version="true" defer></script>
+<script src="~/js/app.js" asp-append-version="true" defer></script>
+
+@await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>

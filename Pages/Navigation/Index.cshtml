@@ -52,7 +52,13 @@
 
         <section class="navigation-map-section">
             <div class="navigation-map-shell">
-                <div id="navMap" class="navigation-map"></div>
+                <div id="navMap"
+                     class="pm-map"
+                     data-map-proxy="/api/map"
+                     data-map-config="/api/map/config"
+                     data-map-default-base="dark"
+                     data-map-max-zoom="18">
+                </div>
 
                 <div class="nav-map-topbar">
                     <div class="nav-map-mode-tabs">

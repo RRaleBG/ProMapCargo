@@ -24,11 +24,11 @@ builder.Services.AddSignalR();
 // ============================================================
 
 var connectionString = builder.Configuration.GetConnectionString("Postgres");
+
 if (string.IsNullOrWhiteSpace(connectionString))
 {
     throw new InvalidOperationException(
-        "ConnectionStrings:Postgres is not configured."
-    );
+        "ConnectionStrings:Postgres is not configured.");
 }
 
 
@@ -60,11 +60,9 @@ builder.Services.AddDbContext<ProMapCargoDbContext>(
                 npgsqlOptions =>
                 {
                     npgsqlOptions.UseNetTopologySuite();
-                }
-            )
+                })
             .UseSnakeCaseNamingConvention();
-    }
-);
+    });
 
 
 // ============================================================
@@ -84,8 +82,7 @@ builder.Services
             options.Password.RequiredLength = 8;
 
             options.SignIn.RequireConfirmedAccount = false;
-        }
-    )
+        })
     .AddEntityFrameworkStores<ProMapCargoDbContext>()
     .AddDefaultTokenProviders();
 
@@ -95,11 +92,23 @@ builder.Services
 // ============================================================
 
 builder.Services.AddScoped<ICurrentUserContext, CurrentUserContext>();
-builder.Services.AddScoped<IUserClaimsPrincipalFactory<ApplicationUser>,IdentityClaimsFactory>();
+
+builder.Services.AddScoped<
+    IUserClaimsPrincipalFactory<ApplicationUser>,
+    IdentityClaimsFactory>();
+
 builder.Services.AddScoped<BusinessService>();
 
-/**************************************************************/
+
+// ============================================================
 // MEMORY CACHE
+// ============================================================
+//
+// Used by the map tile proxy.
+//
+// The cache is intentionally bounded so that repeated map
+// requests cannot grow memory without limit.
+//
 
 builder.Services.AddMemoryCache(options =>
 {
@@ -107,17 +116,22 @@ builder.Services.AddMemoryCache(options =>
 });
 
 
-
 // ============================================================
-// HTTP CLIENT FACTORY
+// MAP TILE HTTP CLIENT
 // ============================================================
+//
+// All external map-provider requests are made server-side.
+//
+// The browser NEVER receives the TomTom API key.
+//
 
 builder.Services.AddHttpClient("MapTiles", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(8);
-    client.DefaultRequestHeaders.UserAgent.ParseAdd("ProMapCargo/1.0 map-tile-proxy");
-});
 
+    client.DefaultRequestHeaders.UserAgent.ParseAdd(
+        "ProMapCargo/1.0 map-tile-proxy");
+});
 
 
 // ============================================================
@@ -134,25 +148,22 @@ builder.Services.AddHttpClient<
             TimeSpan.FromSeconds(15);
 
         var userAgent =
-            builder.Configuration[
-                "Geocoding:UserAgent"
-            ]
+            builder.Configuration["Geocoding:UserAgent"]
             ?? "ProMapCargo/1.0";
 
         client.DefaultRequestHeaders
             .UserAgent
             .ParseAdd(userAgent);
-    }
-);
+    });
 
 
 // ============================================================
 // OSRM ROUTING
 // ============================================================
 //
-// OSRM je fallback routing engine.
+// OSRM is the fallback routing engine.
 //
-// Primarni routing engine:
+// Primary routing:
 //
 //     PostGIS / OSM graph
 //
@@ -160,36 +171,42 @@ builder.Services.AddHttpClient<
 //
 //     OSRM
 //
-// IRoutingService mora biti kompatibilan sa
-// OsrmRoutingService i RoutingController.
-//
 // ============================================================
 
-builder.Services.AddHttpClient<IRoutingService, OsrmRoutingService>(client =>
+builder.Services.AddHttpClient<
+    IRoutingService,
+    OsrmRoutingService
+>(
+    client =>
     {
         client.Timeout =
             TimeSpan.FromSeconds(30);
 
         var userAgent =
-            builder.Configuration[
-                "Routing:UserAgent"
-            ]
+            builder.Configuration["Routing:UserAgent"]
             ?? "ProMapCargo/1.0";
 
         client.DefaultRequestHeaders
             .UserAgent
             .ParseAdd(userAgent);
-    }
-);
+    });
 
 
 // ============================================================
 // ROAD RESTRICTIONS
 // ============================================================
 
-builder.Services.AddScoped<IPostgresRestrictionRepository, PostgresRestrictionRepository>();
-builder.Services.AddScoped<IRestrictionEngine, PostgresRestrictionEngine>();
-builder.Services.AddSingleton<IRestrictionRepository, JsonRestrictionRepository>();
+builder.Services.AddScoped<
+    IPostgresRestrictionRepository,
+    PostgresRestrictionRepository>();
+
+builder.Services.AddScoped<
+    IRestrictionEngine,
+    PostgresRestrictionEngine>();
+
+builder.Services.AddSingleton<
+    IRestrictionRepository,
+    JsonRestrictionRepository>();
 
 
 // ============================================================
@@ -239,31 +256,35 @@ builder.Services.AddScoped<IPostGisRoutingService, PostGisRoutingService>();
 // CORS
 // ============================================================
 
-var corsOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? Array.Empty<string>();
-builder.Services.AddCors(options => {
+var corsOrigins =
+    builder.Configuration
+        .GetSection("Cors:Origins")
+        .Get<string[]>()
+    ?? Array.Empty<string>();
+
+builder.Services.AddCors(options =>
+{
     options.AddPolicy(
         "Frontend",
         policy =>
+        {
+            if (corsOrigins.Length == 0)
             {
-                if (corsOrigins.Length == 0)
-                {
-                    policy
-                        .AllowAnyOrigin()
-                        .AllowAnyHeader()
-                        .AllowAnyMethod();
-
-                    return;
-                }
-
                 policy
-                    .WithOrigins(corsOrigins)
+                    .AllowAnyOrigin()
                     .AllowAnyHeader()
-                    .AllowAnyMethod()
-                    .AllowCredentials();
+                    .AllowAnyMethod();
+
+                return;
             }
-        );
-    }
-);
+
+            policy
+                .WithOrigins(corsOrigins)
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials();
+        });
+});
 
 
 // ============================================================
@@ -301,12 +322,21 @@ app.UseAuthentication();
 
 app.UseAuthorization();
 
-app.MapGet("/api/routing/test", () => Results.Ok(new
-    {
-        status = "ok",
-        controller = "routing",
-        timestamp = DateTimeOffset.UtcNow
-    }));
+
+// ============================================================
+// ROUTING TEST
+// ============================================================
+
+app.MapGet(
+    "/api/routing/test",
+    () =>
+        Results.Ok(
+            new
+            {
+                status = "ok",
+                controller = "routing",
+                timestamp = DateTimeOffset.UtcNow
+            }));
 
 
 // ============================================================
@@ -334,16 +364,16 @@ app.MapRazorPages();
 // HEALTH CHECK
 // ============================================================
 
-app.MapGet("/health", () =>
+app.MapGet(
+    "/health",
+    () =>
         Results.Ok(
             new
             {
                 status = "ok",
                 service = "ProMapCargo.Api",
                 timestamp = DateTimeOffset.UtcNow
-            }
-        )
-);
+            }));
 
 
 // ============================================================
@@ -383,12 +413,10 @@ static async Task InitializeDatabaseAsync(WebApplication app)
 
         var db =
             services.GetRequiredService<
-                ProMapCargoDbContext
-            >();
+                ProMapCargoDbContext>();
 
         app.Logger.LogInformation(
-            "Initializing ProMap Cargo database..."
-        );
+            "Initializing ProMap Cargo database...");
 
 
         // ====================================================
@@ -402,8 +430,7 @@ static async Task InitializeDatabaseAsync(WebApplication app)
         {
             app.Logger.LogWarning(
                 "PostgreSQL database is not available. " +
-                "Application will continue without database initialization."
-            );
+                "Application will continue without database initialization.");
 
             return;
         }
@@ -418,15 +445,13 @@ static async Task InitializeDatabaseAsync(WebApplication app)
             await db.Database.EnsureCreatedAsync();
 
             app.Logger.LogInformation(
-                "EF Core database schema verified."
-            );
+                "EF Core database schema verified.");
         }
         catch (Exception ex)
         {
             app.Logger.LogError(
                 ex,
-                "EF Core database schema initialization failed."
-            );
+                "EF Core database schema initialization failed.");
         }
 
 
@@ -447,8 +472,7 @@ static async Task InitializeDatabaseAsync(WebApplication app)
             await ExecuteSqlBootstrapFileAsync(
                 app,
                 db,
-                fileName
-            );
+                fileName);
         }
 
 
@@ -461,29 +485,25 @@ static async Task InitializeDatabaseAsync(WebApplication app)
             await SeedAsync(
                 services,
                 app.Configuration,
-                app.Logger
-            );
+                app.Logger);
         }
         catch (Exception ex)
         {
             app.Logger.LogError(
                 ex,
-                "Database seed failed. Application will continue running."
-            );
+                "Database seed failed. Application will continue running.");
         }
 
 
         app.Logger.LogInformation(
-            "ProMap Cargo database initialization completed."
-        );
+            "ProMap Cargo database initialization completed.");
     }
     catch (Exception ex)
     {
         app.Logger.LogError(
             ex,
             "Database initialization failed. " +
-            "Application will continue running."
-        );
+            "Application will continue running.");
     }
 }
 
@@ -492,21 +512,22 @@ static async Task InitializeDatabaseAsync(WebApplication app)
 // SQL BOOTSTRAP FILE EXECUTION
 // ============================================================
 
-static async Task ExecuteSqlBootstrapFileAsync(WebApplication app, ProMapCargoDbContext db, string fileName)
+static async Task ExecuteSqlBootstrapFileAsync(
+    WebApplication app,
+    ProMapCargoDbContext db,
+    string fileName)
 {
     var path =
         Path.Combine(
             app.Environment.ContentRootPath,
             "Sql",
-            fileName
-        );
+            fileName);
 
     if (!File.Exists(path))
     {
         app.Logger.LogWarning(
             "SQL bootstrap file not found: {SqlFile}",
-            path
-        );
+            path);
 
         return;
     }
@@ -523,8 +544,7 @@ static async Task ExecuteSqlBootstrapFileAsync(WebApplication app, ProMapCargoDb
         app.Logger.LogError(
             ex,
             "Failed reading SQL bootstrap file: {SqlFile}",
-            path
-        );
+            path);
 
         return;
     }
@@ -533,8 +553,7 @@ static async Task ExecuteSqlBootstrapFileAsync(WebApplication app, ProMapCargoDb
     {
         app.Logger.LogWarning(
             "SQL bootstrap file is empty: {SqlFile}",
-            path
-        );
+            path);
 
         return;
     }
@@ -545,8 +564,7 @@ static async Task ExecuteSqlBootstrapFileAsync(WebApplication app, ProMapCargoDb
 
         app.Logger.LogInformation(
             "Executed SQL bootstrap file: {SqlFile}",
-            fileName
-        );
+            fileName);
     }
     catch (Exception ex)
     {
@@ -554,8 +572,7 @@ static async Task ExecuteSqlBootstrapFileAsync(WebApplication app, ProMapCargoDb
             ex,
             "Failed executing SQL bootstrap file: {SqlFile}. " +
             "Application will continue.",
-            fileName
-        );
+            fileName);
     }
 }
 
@@ -564,38 +581,36 @@ static async Task ExecuteSqlBootstrapFileAsync(WebApplication app, ProMapCargoDb
 // DATABASE SEED
 // ============================================================
 
-static async Task SeedAsync(    IServiceProvider services,    IConfiguration configuration,    ILogger logger){
+static async Task SeedAsync(
+    IServiceProvider services,
+    IConfiguration configuration,
+    ILogger logger)
+{
     // ========================================================
     // SEED ENABLED?
     // ========================================================
 
     if (!configuration.GetValue(
             "Seed:Enabled",
-            true
-        ))
+            true))
     {
         logger.LogInformation(
-            "Database seed is disabled."
-        );
+            "Database seed is disabled.");
 
         return;
     }
 
-
     var db =
         services.GetRequiredService<
-            ProMapCargoDbContext
-        >();
+            ProMapCargoDbContext>();
 
     var roleManager =
         services.GetRequiredService<
-            RoleManager<ApplicationRole>
-        >();
+            RoleManager<ApplicationRole>>();
 
     var userManager =
         services.GetRequiredService<
-            UserManager<ApplicationUser>
-        >();
+            UserManager<ApplicationUser>>();
 
 
     // ========================================================
@@ -616,8 +631,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
     foreach (var roleName in roles)
     {
         if (await roleManager.RoleExistsAsync(
-                roleName
-            ))
+                roleName))
         {
             continue;
         }
@@ -627,13 +641,11 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
                 new ApplicationRole
                 {
                     Name = roleName
-                }
-            );
+                });
 
         EnsureIdentitySuccess(
             result,
-            $"creating role '{roleName}'"
-        );
+            $"creating role '{roleName}'");
     }
 
 
@@ -646,8 +658,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
             .FirstOrDefaultAsync(
                 x =>
                     x.Name ==
-                    "ProMap Cargo Demo"
-            );
+                    "ProMap Cargo Demo");
 
     if (company is null)
     {
@@ -691,15 +702,21 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
 
     var adminEmail =
         configuration[
-            "Seed:AdminEmail"
-        ]
+            "Seed:AdminEmail"]
         ?? "admin@promapcargo.local";
 
     var adminPassword =
         configuration[
-            "Seed:AdminPassword"
-        ]
-        ?? "Admin123!";
+            "Seed:AdminPassword"];
+
+    if (string.IsNullOrWhiteSpace(adminPassword))
+    {
+        logger.LogWarning(
+            "Seed:AdminPassword is not configured. " +
+            "Seed administrator creation will be skipped.");
+
+        return;
+    }
 
 
     // ========================================================
@@ -708,8 +725,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
 
     var admin =
         await userManager.FindByEmailAsync(
-            adminEmail
-        );
+            adminEmail);
 
     if (admin is null)
     {
@@ -741,13 +757,11 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
         var createResult =
             await userManager.CreateAsync(
                 admin,
-                adminPassword
-            );
+                adminPassword);
 
         EnsureIdentitySuccess(
             createResult,
-            "creating seed administrator"
-        );
+            "creating seed administrator");
     }
 
 
@@ -762,13 +776,11 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
 
         var updateResult =
             await userManager.UpdateAsync(
-                admin
-            );
+                admin);
 
         EnsureIdentitySuccess(
             updateResult,
-            "updating seed administrator"
-        );
+            "updating seed administrator");
     }
 
 
@@ -778,19 +790,16 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
 
     if (!await userManager.IsInRoleAsync(
             admin,
-            "Administrator"
-        ))
+            "Administrator"))
     {
         var roleResult =
             await userManager.AddToRoleAsync(
                 admin,
-                "Administrator"
-            );
+                "Administrator");
 
         EnsureIdentitySuccess(
             roleResult,
-            "assigning Administrator role"
-        );
+            "assigning Administrator role");
     }
 
 
@@ -801,8 +810,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
     if (!await db.Vehicles.AnyAsync(
             x =>
                 x.CompanyId ==
-                company.Id
-        ))
+                company.Id))
     {
         var vehicle1 =
             new Vehicle
@@ -850,8 +858,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
 
         db.Vehicles.AddRange(
             vehicle1,
-            vehicle2
-        );
+            vehicle2);
 
         await db.SaveChangesAsync();
     }
@@ -864,8 +871,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
     if (!await db.Drivers.AnyAsync(
             x =>
                 x.CompanyId ==
-                company.Id
-        ))
+                company.Id))
     {
         var driver1 =
             new Driver
@@ -907,8 +913,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
 
         db.Drivers.AddRange(
             driver1,
-            driver2
-        );
+            driver2);
 
         await db.SaveChangesAsync();
     }
@@ -921,8 +926,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
     if (!await db.TransportOrders.AnyAsync(
             x =>
                 x.CompanyId ==
-                company.Id
-        ))
+                company.Id))
     {
         var order =
             new TransportOrder
@@ -1039,8 +1043,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
 
         db.TransportStops.AddRange(
             loading,
-            unloading
-        );
+            unloading);
 
         await db.SaveChangesAsync();
 
@@ -1054,8 +1057,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
                 .FirstAsync(
                     x =>
                         x.CompanyId ==
-                        company.Id
-                );
+                        company.Id);
 
 
         // ====================================================
@@ -1067,8 +1069,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
                 .FirstAsync(
                     x =>
                         x.CompanyId ==
-                        company.Id
-                );
+                        company.Id);
 
 
         // ====================================================
@@ -1152,8 +1153,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
                 Geometry =
                     new NetTopologySuite.Geometries.Point(
                         20.4573,
-                        44.8178
-                    )
+                        44.8178)
                     {
                         SRID =
                             4326
@@ -1181,8 +1181,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
                 Geometry =
                     new NetTopologySuite.Geometries.Point(
                         20.4650,
-                        44.8040
-                    )
+                        44.8040)
                     {
                         SRID =
                             4326
@@ -1191,8 +1190,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
 
         db.RoadRestrictions.AddRange(
             heightRestriction,
-            weightRestriction
-        );
+            weightRestriction);
 
         await db.SaveChangesAsync();
     }
@@ -1204,8 +1202,7 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
 
     logger.LogInformation(
         "Database initialization and demo seed completed for company {CompanyId}.",
-        company.Id
-    );
+        company.Id);
 }
 
 
@@ -1213,7 +1210,9 @@ static async Task SeedAsync(    IServiceProvider services,    IConfiguration con
 // IDENTITY RESULT CHECK
 // ============================================================
 
-static void EnsureIdentitySuccess(    IdentityResult result,    string operation)
+static void EnsureIdentitySuccess(
+    IdentityResult result,
+    string operation)
 {
     if (result.Succeeded)
     {
@@ -1225,11 +1224,8 @@ static void EnsureIdentitySuccess(    IdentityResult result,    string operation
             ", ",
             result.Errors.Select(
                 x =>
-                    $"{x.Code}: {x.Description}"
-            )
-        );
+                    $"{x.Code}: {x.Description}"));
 
     throw new InvalidOperationException(
-        $"Identity operation failed while {operation}: {errors}"
-    );
+        $"Identity operation failed while {operation}: {errors}");
 }
