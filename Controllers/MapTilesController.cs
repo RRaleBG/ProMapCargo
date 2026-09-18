@@ -1,37 +1,79 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Net.Http.Headers;
 
 namespace ProMapCargo.Api.Controllers;
 
 [ApiController]
 [Route("api/map")]
-public sealed class MapTilesController : ControllerBase
+public sealed class MapTilesController(
+    IHttpClientFactory httpClientFactory,
+    IMemoryCache cache,
+    IConfiguration configuration,
+    ILogger<MapTilesController> logger) : ControllerBase
 {
-    private static readonly HashSet<string> AllowedLayers =
+    private static readonly HashSet<string> Layers =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            "flow",
-            "incidents",
             "dark",
-            "satellite"
+            "satellite",
+            "flow",
+            "incidents"
         };
 
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IMemoryCache _cache;
-    private readonly IConfiguration _configuration;
-    private readonly ILogger<MapTilesController> _logger;
-
-    public MapTilesController(
-        IHttpClientFactory httpClientFactory,
-        IMemoryCache cache,
-        IConfiguration configuration,
-        ILogger<MapTilesController> logger)
+    [HttpGet("config")]
+    public IActionResult Config()
     {
-        _httpClientFactory = httpClientFactory;
-        _cache = cache;
-        _configuration = configuration;
-        _logger = logger;
+        var hasKey =
+            !string.IsNullOrWhiteSpace(
+                configuration["TomTom:ApiKey"]);
+
+        return Ok(new
+        {
+            defaultBase = hasKey ? "dark" : "osm",
+
+            layers = new[]
+            {
+                new
+                {
+                    id = "dark",
+                    label = "TomTom Dark",
+                    type = "base",
+                    enabled = hasKey
+                },
+
+                new
+                {
+                    id = "osm",
+                    label = "OSM Light",
+                    type = "base",
+                    enabled = true
+                },
+
+                new
+                {
+                    id = "satellite",
+                    label = "Satellite",
+                    type = "base",
+                    enabled = true
+                },
+
+                new
+                {
+                    id = "flow",
+                    label = "Traffic Flow",
+                    type = "overlay",
+                    enabled = hasKey
+                },
+
+                new
+                {
+                    id = "incidents",
+                    label = "Traffic Incidents",
+                    type = "overlay",
+                    enabled = hasKey
+                }
+            }
+        });
     }
 
     [HttpGet("tiles/{layer}/{zoom:int}/{x:int}/{y:int}.png")]
@@ -40,9 +82,11 @@ public sealed class MapTilesController : ControllerBase
         int zoom,
         int x,
         int y,
-        CancellationToken cancellationToken)
+        CancellationToken ct)
     {
-        if (!AllowedLayers.Contains(layer))
+        layer = layer.ToLowerInvariant();
+
+        if (!Layers.Contains(layer))
         {
             return NotFound();
         }
@@ -52,415 +96,202 @@ public sealed class MapTilesController : ControllerBase
             return BadRequest("Invalid zoom.");
         }
 
-        var tileCount = 1L << zoom;
+        var count = 1L << zoom;
 
-        if (y < 0 || y >= tileCount)
+        if (y < 0 || y >= count)
         {
-            return BadRequest("Invalid tile Y coordinate.");
+            return BadRequest(
+                "Invalid tile Y coordinate.");
         }
 
         x = NormalizeX(
             x,
-            checked((int)tileCount));
+            checked((int)count));
 
-        var normalizedLayer =
-            layer.ToLowerInvariant();
+        var key =
+            configuration["TomTom:ApiKey"];
+
+        var usesTomTom =
+            layer == "dark"
+            || layer == "flow"
+            || layer == "incidents";
+
+        if (usesTomTom &&
+            string.IsNullOrWhiteSpace(key))
+        {
+            return StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                new
+                {
+                    code =
+                        "map_provider_not_configured"
+                });
+        }
 
         var cacheKey =
-            $"promap-map:{normalizedLayer}:{zoom}:{x}:{y}";
+            $"map:{layer}:{zoom}:{x}:{y}";
 
-        var cacheSeconds =
-            GetCacheSeconds(normalizedLayer);
-
-        if (_cache.TryGetValue(
+        if (cache.TryGetValue(
                 cacheKey,
-                out MapTileCacheEntry? cached) &&
-            cached is not null &&
-            cached.Bytes.Length > 0)
+                out MapTile? cached)
+            && cached is not null)
         {
-            SetCacheHeaders(cacheSeconds);
-
             return File(
                 cached.Bytes,
                 cached.ContentType);
         }
 
         var providerY =
-            normalizedLayer is "flow" or "incidents" or "dark"
-                ? (int)(tileCount - 1 - y)
+            usesTomTom
+                ? checked((int)(count - 1 - y))
                 : y;
 
-        var targetUrl =
-            BuildTargetUrl(
-                normalizedLayer,
+        var url =
+            BuildUrl(
+                layer,
                 zoom,
                 x,
-                providerY);
+                providerY,
+                key ?? string.Empty);
 
-        if (targetUrl is null)
+        if (url is null)
         {
-            return Problem(
-                title: "Map layer is not configured",
-                detail:
-                    $"Layer '{normalizedLayer}' requires server-side configuration.",
-                statusCode:
-                    StatusCodes.Status503ServiceUnavailable);
+            return NotFound();
         }
 
         try
         {
             var client =
-                _httpClientFactory.CreateClient(
-                    "MapTiles");
+                httpClientFactory
+                    .CreateClient("MapTiles");
 
             using var response =
                 await client.GetAsync(
-                    targetUrl,
+                    url,
                     HttpCompletionOption.ResponseHeadersRead,
-                    cancellationToken);
+                    ct);
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning(
-                    "Map provider returned HTTP {StatusCode} for layer {Layer}.",
-                    (int)response.StatusCode,
-                    normalizedLayer);
-
                 return StatusCode(
-                    StatusCodes.Status502BadGateway,
-                    new
-                    {
-                        message = "Map provider is unavailable.",
-                        layer = normalizedLayer
-                    });
+                    (int)response.StatusCode);
             }
 
-            var mediaType =
-                response
-                    .Content
-                    .Headers
-                    .ContentType
-                    ?.MediaType;
+            var contentType =
+                response.Content.Headers
+                    .ContentType?
+                    .MediaType;
 
-            if (!IsImage(mediaType))
+            if (string.IsNullOrWhiteSpace(contentType)
+                || !contentType.StartsWith(
+                    "image/",
+                    StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogWarning(
-                    "Map provider returned invalid content type {ContentType} for {Layer}.",
-                    mediaType,
-                    normalizedLayer);
-
                 return StatusCode(
-                    StatusCodes.Status502BadGateway,
-                    new
-                    {
-                        message =
-                            "Map provider returned an invalid tile.",
-                        layer =
-                            normalizedLayer
-                    });
+                    StatusCodes.Status502BadGateway);
             }
 
             var bytes =
-                await response.Content.ReadAsByteArrayAsync(
-                    cancellationToken);
+                await response.Content
+                    .ReadAsByteArrayAsync(ct);
 
             if (bytes.Length == 0)
             {
                 return StatusCode(
-                    StatusCodes.Status502BadGateway,
-                    new
-                    {
-                        message =
-                            "Map provider returned an empty tile.",
-                        layer =
-                            normalizedLayer
-                    });
+                    StatusCodes.Status502BadGateway);
             }
 
-            var contentType =
-                mediaType ?? "image/png";
-
-            _cache.Set(
-                cacheKey,
-                new MapTileCacheEntry(
+            var tile =
+                new MapTile(
                     bytes,
-                    contentType),
-                new MemoryCacheEntryOptions
+                    contentType);
+
+            var cacheSeconds =
+                layer switch
                 {
-                    AbsoluteExpirationRelativeToNow =
-                        TimeSpan.FromSeconds(cacheSeconds),
+                    "flow" => 30,
+                    "incidents" => 15,
+                    "dark" => 3600,
+                    "satellite" => 86400,
+                    _ => 60
+                };
 
-                    Size =
-                        bytes.Length
-                });
-
-            SetCacheHeaders(cacheSeconds);
+            cache.Set(
+                cacheKey,
+                tile,
+                TimeSpan.FromSeconds(
+                    cacheSeconds));
 
             return File(
                 bytes,
                 contentType);
         }
         catch (OperationCanceledException)
-            when (cancellationToken.IsCancellationRequested)
+            when (ct.IsCancellationRequested)
         {
             throw;
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex)
         {
-            _logger.LogWarning(
+            logger.LogWarning(
                 ex,
-                "Map provider request failed for layer {Layer}.",
-                normalizedLayer);
+                "Map tile proxy failed for {Layer} {Zoom}/{X}/{Y}.",
+                layer,
+                zoom,
+                x,
+                y);
 
             return StatusCode(
-                StatusCodes.Status502BadGateway,
-                new
-                {
-                    message =
-                        "Map provider connection failed.",
-                    layer =
-                        normalizedLayer
-                });
-        }
-        catch (TaskCanceledException ex)
-        {
-            _logger.LogWarning(
-                ex,
-                "Map provider timeout for layer {Layer}.",
-                normalizedLayer);
-
-            return StatusCode(
-                StatusCodes.Status504GatewayTimeout,
-                new
-                {
-                    message =
-                        "Map provider request timed out.",
-                    layer =
-                        normalizedLayer
-                });
+                StatusCodes.Status502BadGateway);
         }
     }
 
-    [HttpGet("config")]
-    public IActionResult Config()
-    {
-        var hasTomTomKey =
-            HasTomTomKey();
-
-        return Ok(
-            new
-            {
-                proxy =
-                    "/api/map/tiles/{layer}/{z}/{x}/{y}.png",
-
-                defaultBase =
-                    "dark",
-
-                tomTomConfigured =
-                    hasTomTomKey,
-
-                layers =
-                    new[]
-                    {
-                        new
-                        {
-                            id = "dark",
-                            enabled = hasTomTomKey,
-                            type = "base",
-                            label = "TomTom Dark",
-                            maxZoom = 19,
-                            attribution = "© TomTom"
-                        },
-
-                        new
-                        {
-                            id = "satellite",
-                            enabled = true,
-                            type = "base",
-                            label = "Satellite",
-                            maxZoom = 19,
-                            attribution = "Tiles © Esri"
-                        },
-
-                        new
-                        {
-                            id = "flow",
-                            enabled = hasTomTomKey,
-                            type = "overlay",
-                            label = "Traffic Flow",
-                            maxZoom = 19,
-                            attribution = "© TomTom"
-                        },
-
-                        new
-                        {
-                            id = "incidents",
-                            enabled = hasTomTomKey,
-                            type = "overlay",
-                            label = "Traffic Incidents",
-                            maxZoom = 19,
-                            attribution = "© TomTom"
-                        }
-                    }
-            });
-    }
-
-    private string? BuildTargetUrl(
+    private string? BuildUrl(
         string layer,
-        int zoom,
+        int z,
         int x,
-        int providerY)
+        int y,
+        string key)
     {
-        var apiKey =
-            _configuration["TomTom:ApiKey"];
+        var escapedKey =
+            Uri.EscapeDataString(key);
 
-        var trafficStyle =
-            _configuration["TomTom:TrafficStyle"]
-            ?? "absolute";
-
-        var language =
-            _configuration["TomTom:Language"];
-
-        var languageQuery =
-            string.IsNullOrWhiteSpace(language)
-                ? string.Empty
-                : "&language=" +
-                  Uri.EscapeDataString(language);
-
-        var encodedKey =
-            string.IsNullOrWhiteSpace(apiKey)
-                ? null
-                : Uri.EscapeDataString(apiKey);
-
-        var encodedStyle =
+        var style =
             Uri.EscapeDataString(
-                trafficStyle);
+                configuration["TomTom:TrafficStyle"]
+                ?? "absolute");
 
         return layer switch
         {
-            "flow"
-                when !string.IsNullOrWhiteSpace(encodedKey)
-                =>
-                $"https://api.tomtom.com/maps/orbis/traffic/flow/raster/tile/{zoom}/{x}/{providerY}" +
-                $"?apiVersion=2" +
-                $"&style={encodedStyle}" +
-                $"&key={encodedKey}" +
-                languageQuery,
+            "dark" =>
+                $"https://api.tomtom.com/map/1/tile/basic/night/{z}/{x}/{y}.png?key={escapedKey}",
 
-            "incidents"
-                when !string.IsNullOrWhiteSpace(encodedKey)
-                =>
-                $"https://api.tomtom.com/maps/orbis/traffic/incidents/raster/tile/{zoom}/{x}/{providerY}" +
-                $"?apiVersion=2" +
-                $"&style={encodedStyle}" +
-                $"&key={encodedKey}" +
-                languageQuery,
-
-            "dark"
-                when !string.IsNullOrWhiteSpace(encodedKey)
-                =>
-                $"https://api.tomtom.com/map/1/tile/basic/night/{zoom}/{x}/{providerY}.png" +
-                $"?key={encodedKey}" +
-                languageQuery,
-
-            "satellite"
-                =>
-                $"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{zoom}/{providerY}/{x}",
-
-            _ =>
-                null
-        };
-    }
-
-    private bool HasTomTomKey()
-    {
-        return !string.IsNullOrWhiteSpace(
-            _configuration["TomTom:ApiKey"]);
-    }
-
-    private int GetCacheSeconds(
-        string layer)
-    {
-        return layer switch
-        {
             "flow" =>
-                Math.Clamp(
-                    _configuration.GetValue(
-                        "TomTom:CacheSeconds:Flow",
-                        30),
-                    5,
-                    300),
+                $"https://api.tomtom.com/maps/orbis/traffic/flow/raster/tile/{z}/{x}/{y}?apiVersion=2&style={style}&key={escapedKey}",
 
             "incidents" =>
-                Math.Clamp(
-                    _configuration.GetValue(
-                        "TomTom:CacheSeconds:Incidents",
-                        15),
-                    5,
-                    300),
-
-            "dark" =>
-                Math.Clamp(
-                    _configuration.GetValue(
-                        "TomTom:CacheSeconds:Dark",
-                        3600),
-                    60,
-                    86400),
+                $"https://api.tomtom.com/maps/orbis/traffic/incidents/raster/tile/{z}/{x}/{y}?apiVersion=2&style={style}&key={escapedKey}",
 
             "satellite" =>
-                Math.Clamp(
-                    _configuration.GetValue(
-                        "TomTom:CacheSeconds:Satellite",
-                        86400),
-                    300,
-                    604800),
+                $"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
 
-            _ =>
-                60
+            _ => null
         };
-    }
-
-    private void SetCacheHeaders(
-        int seconds)
-    {
-        Response.Headers[
-            HeaderNames.CacheControl] =
-            $"public,max-age={seconds},stale-while-revalidate=30";
     }
 
     private static int NormalizeX(
         int x,
-        int width)
+        int count)
     {
-        var result =
-            x % width;
+        var value =
+            x % count;
 
-        return result < 0
-            ? result + width
-            : result;
+        return value < 0
+            ? value + count
+            : value;
     }
 
-    private static bool IsImage(
-        string? mediaType)
-    {
-        return
-            string.Equals(
-                mediaType,
-                "image/png",
-                StringComparison.OrdinalIgnoreCase)
-            ||
-            string.Equals(
-                mediaType,
-                "image/jpeg",
-                StringComparison.OrdinalIgnoreCase)
-            ||
-            string.Equals(
-                mediaType,
-                "image/webp",
-                StringComparison.OrdinalIgnoreCase);
-    }
-
-    private sealed record MapTileCacheEntry(
+    private sealed record MapTile(
         byte[] Bytes,
         string ContentType);
 }
