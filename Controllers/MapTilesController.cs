@@ -66,11 +66,17 @@ public sealed class MapTilesController : ControllerBase
         var normalizedLayer =
             layer.ToLowerInvariant();
 
-        var cacheKey = $"promap-map:{normalizedLayer}:{zoom}:{x}:{y}";
+        var cacheKey =
+            $"promap-map:{normalizedLayer}:{zoom}:{x}:{y}";
 
-        var cacheSeconds = GetCacheSeconds(normalizedLayer);
+        var cacheSeconds =
+            GetCacheSeconds(normalizedLayer);
 
-        if (_cache.TryGetValue(cacheKey, out MapTileCacheEntry? cached) && cached is not null && cached.Bytes.Length > 0)
+        if (_cache.TryGetValue(
+                cacheKey,
+                out MapTileCacheEntry? cached) &&
+            cached is not null &&
+            cached.Bytes.Length > 0)
         {
             SetCacheHeaders(cacheSeconds);
 
@@ -79,8 +85,17 @@ public sealed class MapTilesController : ControllerBase
                 cached.ContentType);
         }
 
-        var providerY = normalizedLayer is "flow" or "incidents" or "dark" ? (int)(tileCount - 1 - y) : y;
-        var targetUrl = BuildTargetUrl(normalizedLayer, zoom, x, providerY);
+        var providerY =
+            normalizedLayer is "flow" or "incidents" or "dark"
+                ? (int)(tileCount - 1 - y)
+                : y;
+
+        var targetUrl =
+            BuildTargetUrl(
+                normalizedLayer,
+                zoom,
+                x,
+                providerY);
 
         if (targetUrl is null)
         {
@@ -115,10 +130,8 @@ public sealed class MapTilesController : ControllerBase
                     StatusCodes.Status502BadGateway,
                     new
                     {
-                        message =
-                            "Map provider is unavailable.",
-                        layer =
-                            normalizedLayer
+                        message = "Map provider is unavailable.",
+                        layer = normalizedLayer
                     });
             }
 
@@ -165,8 +178,7 @@ public sealed class MapTilesController : ControllerBase
             }
 
             var contentType =
-                mediaType ??
-                "image/png";
+                mediaType ?? "image/png";
 
             _cache.Set(
                 cacheKey,
@@ -241,91 +253,53 @@ public sealed class MapTilesController : ControllerBase
                 proxy =
                     "/api/map/tiles/{layer}/{z}/{x}/{y}.png",
 
+                defaultBase =
+                    "dark",
+
+                tomTomConfigured =
+                    hasTomTomKey,
+
                 layers =
                     new[]
                     {
                         new
                         {
-                            id =
-                                "dark",
-
-                            enabled =
-                                hasTomTomKey,
-
-                            type =
-                                "base",
-
-                            label =
-                                "TomTom Dark",
-
-                            maxZoom =
-                                19,
-
-                            attribution =
-                                "© TomTom"
+                            id = "dark",
+                            enabled = hasTomTomKey,
+                            type = "base",
+                            label = "TomTom Dark",
+                            maxZoom = 19,
+                            attribution = "© TomTom"
                         },
 
                         new
                         {
-                            id =
-                                "satellite",
-
-                            enabled =
-                                true,
-
-                            type =
-                                "base",
-
-                            label =
-                                "Satellite",
-
-                            maxZoom =
-                                19,
-
-                            attribution =
-                                "Tiles © Esri"
+                            id = "satellite",
+                            enabled = true,
+                            type = "base",
+                            label = "Satellite",
+                            maxZoom = 19,
+                            attribution = "Tiles © Esri"
                         },
 
                         new
                         {
-                            id =
-                                "flow",
-
-                            enabled =
-                                hasTomTomKey,
-
-                            type =
-                                "overlay",
-
-                            label =
-                                "Traffic Flow",
-
-                            maxZoom =
-                                19,
-
-                            attribution =
-                                "© TomTom"
+                            id = "flow",
+                            enabled = hasTomTomKey,
+                            type = "overlay",
+                            label = "Traffic Flow",
+                            maxZoom = 19,
+                            attribution = "© TomTom"
                         },
 
                         new
                         {
-                            id =
-                                "incidents",
-
-                            enabled =
-                                hasTomTomKey,
-
-                            type =
-                                "overlay",
-
-                            label =
-                                "Traffic Incidents",
-
-                            maxZoom =
-                                19,
-
-                            attribution =
-                                "© TomTom"
+                            id = "incidents",
+                            enabled = hasTomTomKey,
+                            type = "overlay",
+                            label = "Traffic Incidents",
+                            maxZoom = 19,
+                            attribution = "© TomTom"
                         }
                     }
             });
@@ -338,17 +312,14 @@ public sealed class MapTilesController : ControllerBase
         int providerY)
     {
         var apiKey =
-            _configuration[
-                "TomTom:ApiKey"];
+            _configuration["TomTom:ApiKey"];
 
         var trafficStyle =
-            _configuration[
-                "TomTom:TrafficStyle"]
+            _configuration["TomTom:TrafficStyle"]
             ?? "absolute";
 
         var language =
-            _configuration[
-                "TomTom:Language"];
+            _configuration["TomTom:Language"];
 
         var languageQuery =
             string.IsNullOrWhiteSpace(language)
@@ -404,8 +375,7 @@ public sealed class MapTilesController : ControllerBase
     private bool HasTomTomKey()
     {
         return !string.IsNullOrWhiteSpace(
-            _configuration[
-                "TomTom:ApiKey"]);
+            _configuration["TomTom:ApiKey"]);
     }
 
     private int GetCacheSeconds(

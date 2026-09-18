@@ -442,13 +442,17 @@ window.ProMap = window.ProMap || {};
         };
     }
 
+
     function initializeMap() {
         if (!$("navMap")) {
             return;
         }
 
         if (!window.L) {
-            showError("Leaflet nije učitan. Proveri _Layout.cshtml.");
+            showError(
+                "Leaflet nije učitan. Proveri _Layout.cshtml."
+            );
+
             return;
         }
 
@@ -456,80 +460,79 @@ window.ProMap = window.ProMap || {};
             return;
         }
 
-        state.map = L.map("navMap", {
-            zoomControl: true,
-            preferCanvas: true,
-        }).setView([44.9, 20.5], 8);
-
-        const lightMap = L.tileLayer(
-            "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        state.map = L.map(
+            "navMap",
             {
-                maxZoom: 19,
-                attribution: "© OpenStreetMap contributors",
-            },
+                zoomControl: true,
+                preferCanvas: true
+            }
+        ).setView(
+            [44.9, 20.5],
+            8
         );
 
-        const darkMap = L.tileLayer(
-            "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-            {
-                maxZoom: 20,
-                subdomains: "abcd",
-                attribution: "© OpenStreetMap contributors © CARTO",
-            },
+        state.map.on(
+            "dragstart",
+            () => {
+                if (state.live) {
+                    state.liveFollow = false;
+                }
+            }
         );
 
-        lightMap.addTo(state.map);
+        state.map.on(
+            "click",
+            event => {
+                if (!state.picking) {
+                    return;
+                }
 
-        L.control
-            .layers(
-                {
-                    "OSM Light": lightMap,
-                    "Dark Map": darkMap,
-                },
-                null,
-                {
-                    collapsed: true,
-                    position: "topright",
-                },
-            )
-            .addTo(state.map);
+                const point = {
+                    latitude:
+                        event.latlng.lat,
 
-        state.map.on("dragstart", () => {
-            if (state.live) {
-                state.liveFollow = false;
+                    longitude:
+                        event.latlng.lng,
+
+                    label:
+                        `${event.latlng.lat.toFixed(6)}, ${event.latlng.lng.toFixed(6)}`
+                };
+
+                if (
+                    state.picking ===
+                    "start"
+                ) {
+                    $("navStart").value =
+                        point.label;
+
+                    setStart(point);
+                }
+                else {
+                    $("navEnd").value =
+                        point.label;
+
+                    setDestination(point);
+                }
+
+                state.picking =
+                    null;
+
+                state.map
+                    .getContainer()
+                    .style.cursor =
+                    "";
+
+                showError("");
             }
-        });
+        );
 
-        state.map.on("click", (event) => {
-            if (!state.picking) {
-                return;
-            }
-
-            const point = {
-                latitude: event.latlng.lat,
-                longitude: event.latlng.lng,
-                label: `${event.latlng.lat.toFixed(6)}, ${event.latlng.lng.toFixed(6)}`,
-            };
-
-            if (state.picking === "start") {
-                $("navStart").value = point.label;
-
-                setStart(point);
-            } else {
-                $("navEnd").value = point.label;
-
-                setDestination(point);
-            }
-
-            state.picking = null;
-
-            state.map.getContainer().style.cursor = "";
-
-            showError("");
-        });
-
-        setTimeout(() => state.map?.invalidateSize(), 150);
+        setTimeout(
+            () =>
+                state.map?.invalidateSize(),
+            150
+        );
     }
+
 
     function setStart(point) {
         const normalized = normalizePoint(point);

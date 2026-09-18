@@ -52,9 +52,12 @@
 
         <section class="navigation-map-section">
             <div class="navigation-map-shell">
-                <div id="navMap" class="pm-map" data-map-proxy="/api/map" data-map-config="/api/map/config"
-                     data-map-default-base="dark" data-map-max-zoom="18">
-                </div>
+                <div id="navMap"
+                     class="pm-map"
+                     data-map-proxy="/api/map/tiles/{layer}/{z}/{x}/{y}.png"
+                     data-map-config="/api/map/config"
+                     data-map-default-base="dark"
+                     data-map-max-zoom="19">
 
                 <div class="nav-map-topbar">
                     <div class="nav-map-mode-tabs">
