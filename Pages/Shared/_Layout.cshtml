@@ -5,6 +5,7 @@
 
 <!DOCTYPE html>
 <html lang="sr">
+
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -16,71 +17,37 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
-        rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+          rel="stylesheet" />
 
-    <link
-        rel="stylesheet"
-        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
-    <link
-        rel="stylesheet"
-        href="~/css/tokens.css"
-        asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/tokens.css" asp-append-version="true" />
 
-    <link
-        rel="stylesheet"
-        href="~/css/base.css"
-        asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/base.css" asp-append-version="true" />
 
-    <link
-        rel="stylesheet"
-        href="~/css/site.css"
-        asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
 
-    <link
-        rel="stylesheet"
-        href="~/css/compat.css"
-        asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/compat.css" asp-append-version="true" />
 
-    <link
-        rel="stylesheet"
-        href="~/css/components.css"
-        asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/components.css" asp-append-version="true" />
 
-    <link
-        rel="stylesheet"
-        href="~/css/forms.css"
-        asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/forms.css" asp-append-version="true" />
 
-    <link
-        rel="stylesheet"
-        href="~/css/tables.css"
-        asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/tables.css" asp-append-version="true" />
 
-    <link
-        rel="stylesheet"
-        href="~/css/animations.css"
-        asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/animations.css" asp-append-version="true" />
 
     @await RenderSectionAsync("Head", required: false)
 </head>
 
 <body class="pm-body">
 
-    <input
-        type="checkbox"
-        id="pm-sidebar-toggle"
-        class="pm-sidebar-toggle-input"
-        aria-hidden="true" />
+    <input type="checkbox" id="pm-sidebar-toggle" class="pm-sidebar-toggle-input" aria-hidden="true" />
 
     <div class="pm-app-shell">
 
-        <label
-            for="pm-sidebar-toggle"
-            class="pm-mobile-backdrop"
-            aria-label="Zatvori navigaciju">
+        <label for="pm-sidebar-toggle" class="pm-mobile-backdrop" aria-label="Zatvori navigaciju">
         </label>
 
         <aside class="pm-sidebar">
@@ -89,10 +56,7 @@
 
                 <div class="pm-brand-block">
 
-                    <a
-                        asp-page="/Dispatch/Index"
-                        class="pm-brand"
-                        aria-label="ProMap Cargo Command Center">
+                    <a asp-page="/Dispatch/Index" class="pm-brand" aria-label="ProMap Cargo Command Center">
 
                         <span class="pm-brand-mark">
                             <span></span>
@@ -108,10 +72,7 @@
 
                     </a>
 
-                    <label
-                        for="pm-sidebar-toggle"
-                        class="pm-sidebar-close"
-                        aria-label="Zatvori meni">
+                    <label for="pm-sidebar-toggle" class="pm-sidebar-close" aria-label="Zatvori meni">
                         ×
                     </label>
 
@@ -127,9 +88,7 @@
 
                 </div>
 
-                <nav
-                    class="pm-navigation"
-                    aria-label="Glavna navigacija">
+                <nav class="pm-navigation" aria-label="Glavna navigacija">
 
                     <div class="pm-nav-section">
 
@@ -137,9 +96,8 @@
                             OPERACIJE
                         </div>
 
-                        <a
-                            asp-page="/Dispatch/Index"
-                            class="pm-nav-item @(currentPage == "/Dispatch/Index" ? "active" : "")">
+                        <a asp-page="/Dispatch/Index"
+                           class="pm-nav-item @(currentPage == "/Dispatch/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">◈</span>
 
@@ -149,9 +107,8 @@
 
                         </a>
 
-                        <a
-                            asp-page="/Orders/Index"
-                            class="pm-nav-item @(currentPage == "/Orders/Index" ? "active" : "")">
+                        <a asp-page="/Orders/Index"
+                           class="pm-nav-item @(currentPage == "/Orders/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">▤</span>
 
@@ -161,9 +118,7 @@
 
                         </a>
 
-                        <a
-                            asp-page="/Trips/Index"
-                            class="pm-nav-item @(currentPage == "/Trips/Index" ? "active" : "")">
+                        <a asp-page="/Trips/Index" class="pm-nav-item @(currentPage == "/Trips/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">↗</span>
 
@@ -181,9 +136,8 @@
                             FLEET
                         </div>
 
-                        <a
-                            asp-page="/Vehicles/Index"
-                            class="pm-nav-item @(currentPage == "/Vehicles/Index" || currentPage == "/Vehicles/New" ? "active" : "")">
+                        <a asp-page="/Vehicles/Index"
+                           class="pm-nav-item @(currentPage == "/Vehicles/Index" || currentPage == "/Vehicles/New" ? "active" : "")">
 
                             <span class="pm-nav-icon">▣</span>
 
@@ -193,9 +147,8 @@
 
                         </a>
 
-                        <a
-                            asp-page="/Drivers/Index"
-                            class="pm-nav-item @(currentPage == "/Drivers/Index" ? "active" : "")">
+                        <a asp-page="/Drivers/Index"
+                           class="pm-nav-item @(currentPage == "/Drivers/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">♙</span>
 
@@ -205,9 +158,8 @@
 
                         </a>
 
-                        <a
-                            asp-page="/Navigation/Index"
-                            class="pm-nav-item @(currentPage == "/Navigation/Index" ? "active" : "")">
+                        <a asp-page="/Navigation/Index"
+                           class="pm-nav-item @(currentPage == "/Navigation/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">◎</span>
 
@@ -229,9 +181,8 @@
                             KONTROLA
                         </div>
 
-                        <a
-                            asp-page="/Alerts/Index"
-                            class="pm-nav-item @(currentPage == "/Alerts/Index" ? "active" : "")">
+                        <a asp-page="/Alerts/Index"
+                           class="pm-nav-item @(currentPage == "/Alerts/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">△</span>
 
@@ -239,18 +190,14 @@
                                 Alerts
                             </span>
 
-                            <span
-                                class="pm-nav-count danger"
-                                data-alert-count
-                                hidden>
+                            <span class="pm-nav-count danger" data-alert-count hidden>
                                 0
                             </span>
 
                         </a>
 
-                        <a
-                            asp-page="/Moderation/Index"
-                            class="pm-nav-item @(currentPage == "/Moderation/Index" ? "active" : "")">
+                        <a asp-page="/Moderation/Index"
+                           class="pm-nav-item @(currentPage == "/Moderation/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">◌</span>
 
@@ -260,9 +207,7 @@
 
                         </a>
 
-                        <a
-                            asp-page="/Audit/Index"
-                            class="pm-nav-item @(currentPage == "/Audit/Index" ? "active" : "")">
+                        <a asp-page="/Audit/Index" class="pm-nav-item @(currentPage == "/Audit/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">◇</span>
 
@@ -272,9 +217,8 @@
 
                         </a>
 
-                        <a
-                            asp-page="/Compliance/Index"
-                            class="pm-nav-item @(currentPage == "/Compliance/Index" ? "active" : "")">
+                        <a asp-page="/Compliance/Index"
+                           class="pm-nav-item @(currentPage == "/Compliance/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">◈</span>
 
@@ -284,9 +228,8 @@
 
                         </a>
 
-                        <a
-                            asp-page="/Monitoring/Index"
-                            class="pm-nav-item @(currentPage == "/Monitoring/Index" ? "active" : "")">
+                        <a asp-page="/Monitoring/Index"
+                           class="pm-nav-item @(currentPage == "/Monitoring/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">◉</span>
 
@@ -304,9 +247,8 @@
                             ANALITIKA
                         </div>
 
-                        <a
-                            asp-page="/Finance/Index"
-                            class="pm-nav-item @(currentPage == "/Finance/Index" ? "active" : "")">
+                        <a asp-page="/Finance/Index"
+                           class="pm-nav-item @(currentPage == "/Finance/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">₿</span>
 
@@ -316,9 +258,8 @@
 
                         </a>
 
-                        <a
-                            asp-page="/Reports/Index"
-                            class="pm-nav-item @(currentPage == "/Reports/Index" ? "active" : "")">
+                        <a asp-page="/Reports/Index"
+                           class="pm-nav-item @(currentPage == "/Reports/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">▥</span>
 
@@ -336,9 +277,8 @@
                             SISTEM
                         </div>
 
-                        <a
-                            asp-page="/Settings/Index"
-                            class="pm-nav-item @(currentPage == "/Settings/Index" ? "active" : "")">
+                        <a asp-page="/Settings/Index"
+                           class="pm-nav-item @(currentPage == "/Settings/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">⚙</span>
 
@@ -348,9 +288,8 @@
 
                         </a>
 
-                        <a
-                            asp-page="/Profile/Index"
-                            class="pm-nav-item @(currentPage == "/Profile/Index" ? "active" : "")">
+                        <a asp-page="/Profile/Index"
+                           class="pm-nav-item @(currentPage == "/Profile/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">◯</span>
 
@@ -360,9 +299,7 @@
 
                         </a>
 
-                        <a
-                            asp-page="/Admin/Index"
-                            class="pm-nav-item @(currentPage == "/Admin/Index" ? "active" : "")">
+                        <a asp-page="/Admin/Index" class="pm-nav-item @(currentPage == "/Admin/Index" ? "active" : "")">
 
                             <span class="pm-nav-icon">⚙</span>
 
@@ -418,10 +355,7 @@
 
                 <div class="pm-topbar-left">
 
-                    <label
-                        for="pm-sidebar-toggle"
-                        class="pm-menu-button"
-                        aria-label="Otvori navigaciju">
+                    <label for="pm-sidebar-toggle" class="pm-menu-button" aria-label="Otvori navigaciju">
 
                         <span></span>
                         <span></span>
@@ -453,10 +387,8 @@
                             ⌕
                         </span>
 
-                        <input
-                            type="search"
-                            placeholder="Pretraga vozila, vozača, naloga, lokacija..."
-                            aria-label="Globalna pretraga" />
+                        <input type="search" placeholder="Pretraga vozila, vozača, naloga, lokacija..."
+                               aria-label="Globalna pretraga" />
 
                         <kbd>
                             Ctrl K
@@ -478,27 +410,19 @@
 
                     </div>
 
-                    <a
-                        asp-page="/Alerts/Index"
-                        class="pm-topbar-action pm-notification"
-                        aria-label="Obaveštenja">
+                    <a asp-page="/Alerts/Index" class="pm-topbar-action pm-notification" aria-label="Obaveštenja">
 
                         <span class="pm-notification-icon">
                             ♢
                         </span>
 
-                        <span
-                            class="pm-notification-badge"
-                            data-alert-count
-                            hidden>
+                        <span class="pm-notification-badge" data-alert-count hidden>
                             0
                         </span>
 
                     </a>
 
-                    <a
-                        asp-page="/Profile/Index"
-                        class="pm-user">
+                    <a asp-page="/Profile/Index" class="pm-user">
 
                         <span class="pm-user-avatar">
                             MP
@@ -590,81 +514,55 @@
 
     </div>
 
-    <script
-        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-        defer>
+    <!-- ===================================================== -->
+    <!-- LEAFLET MUST LOAD BEFORE PAGE MAP SCRIPTS             -->
+    <!-- ===================================================== -->
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
     </script>
 
-    <script
-        src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"
-        defer>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js" defer>
     </script>
 
-    <!-- CENTRAL MAP LAYER INTEGRATION -->
-    <script
-        src="~/js/promap-map-layers.js"
-        asp-append-version="true"
-        defer>
+    <!-- ===================================================== -->
+    <!-- CENTRAL MAP LAYER SYSTEM                              -->
+    <!-- ===================================================== -->
+
+    <script src="~/js/promap-map-layers.js" asp-append-version="true">
     </script>
 
-    <script
-        src="~/js/core/dom.js"
-        asp-append-version="true"
-        defer>
+    <!-- ===================================================== -->
+    <!-- CORE APPLICATION SCRIPTS                              -->
+    <!-- ===================================================== -->
+
+    <script src="~/js/core/dom.js" asp-append-version="true" defer>
     </script>
 
-    <script
-        src="~/js/core/events.js"
-        asp-append-version="true"
-        defer>
+    <script src="~/js/core/events.js" asp-append-version="true" defer>
     </script>
 
-    <script
-        src="~/js/core/http.js"
-        asp-append-version="true"
-        defer>
+    <script src="~/js/core/http.js" asp-append-version="true" defer>
     </script>
 
-    <script
-        src="~/js/core/format.js"
-        asp-append-version="true"
-        defer>
+    <script src="~/js/core/format.js" asp-append-version="true" defer>
     </script>
 
-    <script
-        src="~/js/core/validation.js"
-        asp-append-version="true"
-        defer>
+    <script src="~/js/core/validation.js" asp-append-version="true" defer>
     </script>
 
-    <script
-        src="~/js/core/toast.js"
-        asp-append-version="true"
-        defer>
+    <script src="~/js/core/toast.js" asp-append-version="true" defer>
     </script>
 
-    <script
-        src="~/js/core/modal.js"
-        asp-append-version="true"
-        defer>
+    <script src="~/js/core/modal.js" asp-append-version="true" defer>
     </script>
 
-    <script
-        src="~/js/core/compat.js"
-        asp-append-version="true"
-        defer>
+    <script src="~/js/core/compat.js" asp-append-version="true" defer>
     </script>
 
-    <script
-        src="~/js/services/alerts.js"
-        asp-append-version="true"
-        defer>
+    <script src="~/js/services/alerts.js" asp-append-version="true" defer>
     </script>
 
-    <script
-        src="~/js/app.js"
-        asp-append-version="true"
-        defer>
+    <script src="~/js/app.js" asp-append-version="true" defer>
     </script>
 
     @await RenderSectionAsync(
@@ -672,4 +570,5 @@
         required: false)
 
 </body>
+
 </html>
