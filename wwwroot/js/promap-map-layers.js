@@ -6,31 +6,34 @@
   const DEFAULTS = {
     proxyTemplate: "/api/map/tiles/{layer}/{z}/{x}/{y}.png",
     configUrl: "/api/map/config",
-    defaultBase: "osm",
+    defaultBase: "dark",
     maxZoom: 19,
   };
 
   /*
    * ============================================================
-   * CANONICAL MAP LAYERS
+   * PROMAP CARGO - CENTRAL MAP LAYER SYSTEM
    * ============================================================
    *
-   * Base:
-   *   1. OSM Light
-   *   2. TomTom Dark
-   *   3. Satellite
+   * BASE LAYERS
+   * ------------------------------------------------------------
+   * 1. TomTom Dark
+   * 2. OSM Light
+   * 3. Satellite
    *
-   * Overlay:
-   *   4. Traffic Flow
-   *   5. Traffic Incidents
+   * OVERLAYS
+   * ------------------------------------------------------------
+   * 4. Traffic Flow
+   * 5. Traffic Incidents
    *
-   * OSM Light is the only direct browser-to-provider layer.
+   * TomTom API key NEVER reaches the browser.
    *
-   * All TomTom/Esri proxy layers go through:
+   * Browser requests:
    *
-   *   /api/map/tiles/{layer}/{z}/{x}/{y}.png
-   *
-   * The TomTom API key therefore never reaches the browser.
+   * /api/map/tiles/dark/{z}/{x}/{y}.png
+   * /api/map/tiles/satellite/{z}/{x}/{y}.png
+   * /api/map/tiles/flow/{z}/{x}/{y}.png
+   * /api/map/tiles/incidents/{z}/{x}/{y}.png
    */
 
   const OSM_LIGHT = {
@@ -89,9 +92,9 @@
   let mapHookInstalled = false;
 
   /*
-   * ------------------------------------------------------------
-   * Proxy URL
-   * ------------------------------------------------------------
+   * ============================================================
+   * PROXY TEMPLATE
+   * ============================================================
    */
 
   function normalizeProxyTemplate(value) {
@@ -101,9 +104,17 @@
       return DEFAULTS.proxyTemplate;
     }
 
+    /*
+     * Backward compatibility with existing pages.
+     */
+
     if (raw === "/api/map" || raw === "/api/map/") {
       return DEFAULTS.proxyTemplate;
     }
+
+    /*
+     * Complete template.
+     */
 
     if (
       raw.includes("{layer}") &&
@@ -113,6 +124,10 @@
     ) {
       return raw;
     }
+
+    /*
+     * Controller base.
+     */
 
     return `${raw.replace(/\/+$/, "")}/tiles/{layer}/{z}/{x}/{y}.png`;
   }
@@ -126,9 +141,9 @@
   }
 
   /*
-   * ------------------------------------------------------------
-   * Map root / options
-   * ------------------------------------------------------------
+   * ============================================================
+   * MAP OPTIONS
+   * ============================================================
    */
 
   function getRootForMap(map) {
@@ -165,9 +180,9 @@
   }
 
   /*
-   * ------------------------------------------------------------
-   * Backend map configuration
-   * ------------------------------------------------------------
+   * ============================================================
+   * BACKEND CONFIG
+   * ============================================================
    */
 
   async function loadConfig(url) {
@@ -202,21 +217,9 @@
   }
 
   /*
-   * ------------------------------------------------------------
-   * Layer definition merging
-   * ------------------------------------------------------------
-   *
-   * Backend configuration controls availability of TomTom.
-   *
-   * We NEVER invent a different layer name.
-   *
-   * Canonical IDs are:
-   *
-   *   osm
-   *   dark
-   *   satellite
-   *   flow
-   *   incidents
+   * ============================================================
+   * NORMALIZE BACKEND LAYERS
+   * ============================================================
    */
 
   function mergeLayerDefinitions(config) {
@@ -236,8 +239,6 @@
 
     /*
      * OSM Light
-     *
-     * Always enabled.
      */
 
     result.push({
@@ -245,7 +246,7 @@
     });
 
     /*
-     * Exact canonical order.
+     * Exact canonical layer order.
      */
 
     for (const id of ["dark", "satellite", "flow", "incidents"]) {
@@ -253,25 +254,14 @@
 
       const backend = backendById.get(id);
 
-      /*
-       * If backend has a definition,
-       * use its enabled state and
-       * configuration metadata.
-       *
-       * If backend doesn't return one,
-       * keep the canonical layer available
-       * so the frontend still knows the
-       * exact layer endpoint.
-       */
-
       const definition = {
         ...canonical,
         ...(backend || {}),
       };
 
       /*
-       * The four configured server layers
-       * must always use the proxy.
+       * These four layers ALWAYS use
+       * the server proxy.
        */
 
       definition.id = id;
@@ -280,9 +270,6 @@
 
       /*
        * Satellite is always available.
-       *
-       * TomTom layers depend on backend
-       * configuration / API key.
        */
 
       if (id === "satellite") {
@@ -296,9 +283,9 @@
   }
 
   /*
-   * ------------------------------------------------------------
-   * Leaflet layer creation
-   * ------------------------------------------------------------
+   * ============================================================
+   * LEAFLET LAYER CREATION
+   * ============================================================
    */
 
   function createExternalLayer(definition) {
@@ -328,16 +315,10 @@
     );
 
     /*
-     * IMPORTANT:
+     * We intentionally use a dummy URL.
      *
-     * Do not use the provider URL here.
-     *
-     * The browser gets:
-     *
-     * /api/map/tiles/dark/...
-     * /api/map/tiles/satellite/...
-     * /api/map/tiles/flow/...
-     * /api/map/tiles/incidents/...
+     * getTileUrl() below generates the
+     * real ProMap API URL.
      */
 
     const layer = L.tileLayer("about:blank", {
@@ -359,11 +340,6 @@
     layer.getTileUrl = (coords) =>
       proxyTileUrl(options.proxyTemplate, definition.id, coords);
 
-    /*
-     * Keep Leaflet's internal URL
-     * consistent with the real proxy.
-     */
-
     layer._url = options.proxyTemplate;
 
     layer.__proMapLayerId = String(definition.id).toLowerCase();
@@ -382,22 +358,21 @@
   }
 
   /*
-   * ------------------------------------------------------------
-   * Legacy layer cleanup
-   * ------------------------------------------------------------
-   *
-   * Old pages may create:
-   *
-   * OSM
-   * CARTO
-   * /api/map
-   *
-   * Remove them before installing
-   * the central layer system.
+   * ============================================================
+   * REMOVE OLD PAGE-SPECIFIC MAP LAYERS
+   * ============================================================
    */
 
   function isLegacyMapTileLayer(layer) {
     if (!layer) {
+      return false;
+    }
+
+    /*
+     * Never remove our own central proxy layers.
+     */
+
+    if (layer.__proMapProxy) {
       return false;
     }
 
@@ -444,9 +419,9 @@
   }
 
   /*
-   * ------------------------------------------------------------
-   * Base layers
-   * ------------------------------------------------------------
+   * ============================================================
+   * BASE LAYERS
+   * ============================================================
    */
 
   function buildBaseLayers(definitions, options) {
@@ -472,9 +447,7 @@
     }
 
     /*
-     * Safety guarantee:
-     *
-     * OSM Light must always exist.
+     * OSM Light is mandatory.
      */
 
     if (!base["OSM Light"]) {
@@ -486,9 +459,7 @@
     }
 
     /*
-     * Safety guarantee:
-     *
-     * Satellite must always exist.
+     * Satellite is mandatory.
      */
 
     if (!base["Satellite"]) {
@@ -506,17 +477,9 @@
   }
 
   /*
-   * ------------------------------------------------------------
-   * Traffic overlays
-   * ------------------------------------------------------------
-   *
-   * These are REAL Leaflet TileLayers.
-   *
-   * Traffic Flow:
-   *   /api/map/tiles/flow/{z}/{x}/{y}.png
-   *
-   * Traffic Incidents:
-   *   /api/map/tiles/incidents/{z}/{x}/{y}.png
+   * ============================================================
+   * TRAFFIC OVERLAYS
+   * ============================================================
    */
 
   function buildOverlays(definitions, options, created) {
@@ -548,17 +511,17 @@
   }
 
   /*
-   * ------------------------------------------------------------
-   * Default base selection
-   * ------------------------------------------------------------
+   * ============================================================
+   * DEFAULT MAP = TOMTOM DARK
+   * ============================================================
    */
 
   function selectDefaultBase(base, options) {
-    const wanted = String(options.defaultBase || "osm").toLowerCase();
+    const wanted = String(options.defaultBase || "dark").toLowerCase();
 
-    if (wanted === "satellite" && base["Satellite"]) {
-      return base["Satellite"];
-    }
+    /*
+     * TomTom Dark is the default.
+     */
 
     if (
       (wanted === "dark" || wanted === "tomtom-dark") &&
@@ -568,12 +531,40 @@
     }
 
     /*
-     * OSM Light is the universal fallback.
+     * Explicit Satellite.
+     */
+
+    if (wanted === "satellite" && base["Satellite"]) {
+      return base["Satellite"];
+    }
+
+    /*
+     * Explicit OSM.
+     */
+
+    if (wanted === "osm" && base["OSM Light"]) {
+      return base["OSM Light"];
+    }
+
+    /*
+     * Dark fallback.
+     */
+
+    if (base["TomTom Dark"]) {
+      return base["TomTom Dark"];
+    }
+
+    /*
+     * OSM fallback.
      */
 
     if (base["OSM Light"]) {
       return base["OSM Light"];
     }
+
+    /*
+     * Satellite fallback.
+     */
 
     if (base["Satellite"]) {
       return base["Satellite"];
@@ -583,19 +574,15 @@
   }
 
   /*
-   * ------------------------------------------------------------
-   * Attach central map layer system
-   * ------------------------------------------------------------
+   * ============================================================
+   * ATTACH MAP LAYERS
+   * ============================================================
    */
 
   async function attach(map, userOptions = {}) {
     if (!map || !window.L) {
       return null;
     }
-
-    /*
-     * Prevent duplicate initialization.
-     */
 
     if (map.__proMapLayersPromise) {
       return map.__proMapLayersPromise;
@@ -614,10 +601,7 @@
       try {
         config = await loadConfig(options.configUrl);
       } catch (error) {
-        console.warn(
-          "ProMap map configuration unavailable. OSM/Satellite will remain available.",
-          error,
-        );
+        console.warn("ProMap map configuration unavailable.", error);
 
         config = {
           layers: [],
@@ -625,13 +609,14 @@
       }
 
       /*
-       * Build EXACT canonical layer set.
+       * Build canonical layer set.
        */
 
       const definitions = mergeLayerDefinitions(config);
 
       /*
-       * Remove legacy page layers.
+       * Remove old page-specific
+       * OSM/CARTO/API layers.
        */
 
       removeLegacyLayers(map);
@@ -639,33 +624,26 @@
       removeLegacyLayerControls(map);
 
       /*
-       * Build BASE:
-       *
-       * OSM Light
-       * TomTom Dark
-       * Satellite
+       * Build base layers.
        */
 
       const { base, created } = buildBaseLayers(definitions, options);
 
       /*
-       * Build OVERLAYS:
-       *
-       * Traffic Flow
-       * Traffic Incidents
+       * Build traffic overlays.
        */
 
       const overlays = buildOverlays(definitions, options, created);
 
       /*
-       * Remove any legacy layers
-       * one more time.
+       * Remove legacy layers again
+       * after page scripts finished.
        */
 
       removeLegacyLayers(map);
 
       /*
-       * Select initial base layer.
+       * DEFAULT = TOMTOM DARK.
        */
 
       const selected = selectDefaultBase(base, options);
@@ -675,8 +653,7 @@
       }
 
       /*
-       * Single central Leaflet
-       * Layer Control.
+       * ONE Layer Control.
        */
 
       const control = L.control.layers(base, overlays, {
@@ -688,12 +665,7 @@
       control.addTo(map);
 
       /*
-       * Expose everything for:
-       *
-       * navigation.js
-       * dispatch.js
-       * monitoring.js
-       * dashboard.js
+       * Store central state.
        */
 
       const result = {
@@ -709,10 +681,6 @@
 
       map.__proMapLayers = result;
 
-      /*
-       * Diagnostic information.
-       */
-
       console.info("ProMap map layers loaded:", {
         base: Object.keys(base),
 
@@ -726,12 +694,9 @@
   }
 
   /*
-   * ------------------------------------------------------------
-   * Leaflet map hook
-   * ------------------------------------------------------------
-   *
-   * Every L.map() automatically receives
-   * the central ProMap layer system.
+   * ============================================================
+   * AUTOMATIC L.MAP() INTEGRATION
+   * ============================================================
    */
 
   function installMapHook() {
@@ -747,10 +712,8 @@
       const map = originalMap.apply(this, args);
 
       /*
-       * Wait one microtask so
-       * page-specific map code
-       * has time to finish creating
-       * its old layers.
+       * Let page-specific map code
+       * finish first.
        */
 
       Promise.resolve()
@@ -767,9 +730,9 @@
   }
 
   /*
-   * ------------------------------------------------------------
-   * Public API
-   * ------------------------------------------------------------
+   * ============================================================
+   * PUBLIC API
+   * ============================================================
    */
 
   function initialize() {
@@ -784,6 +747,7 @@
 
   window.ProMap.MapLayers = {
     attach,
+
     loadConfig,
 
     createTileLayer: (definition, options = {}) => {
