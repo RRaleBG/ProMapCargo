@@ -632,146 +632,124 @@ window.ProMap = window.ProMap || {};
             return;
         }
 
-        if (!window.L) {
+        if (!window.maplibregl) {
             console.error(
-                "[ProMap Navigation] Leaflet nije učitan."
+                "[ProMap Navigation] MapLibre GL JS nije učitan."
+            );
+
+            showError(
+                "MapLibre mapa nije učitana."
             );
 
             return;
         }
 
         if (state.map) {
-            state.map.invalidateSize();
+            state.map.resize();
             return;
         }
 
         console.log(
-            "[ProMap Navigation] Kreiram Leaflet mapu..."
+            "[ProMap Navigation] Kreiram MapLibre + TomTom Custom Style mapu..."
         );
 
-        state.map = L.map(
-            mapElement,
-            {
-                zoomControl: true,
-                preferCanvas: true
-            }
-        ).setView(
-            [44.8176, 20.4633],
-            8
+        /*
+         * ============================================================
+         * TOMTOM CUSTOM DARK STYLE
+         * ============================================================
+         *
+         * API key NE ostavljamo hardkodovan u produkciji.
+         *
+         * Za sada koristi vrednost koju si poslao.
+         * Kasnije ćemo je prebaciti u konfiguraciju.
+         */
+        const TOMTOM_STYLE_URL =
+            "https://api.tomtom.com/style/2/custom/style/" +
+            "dG9tdG9tQEBANndOMmY2c2hkWEdNUTh2dDvHAUOO8wBB8Y5JhgFOxC6O" +
+            "/drafts/0?key=VdCFpW9pl43Fn8csIhhUnaL2btMaRDfp";
+
+        state.map =
+            new maplibregl.Map({
+                container: mapElement,
+
+                style: TOMTOM_STYLE_URL,
+
+                center: [
+                    20.4573,
+                    44.8178
+                ],
+
+                zoom: 8,
+
+                pitch: 0,
+
+                bearing: 0,
+
+                attributionControl: true
+            });
+
+        /*
+         * ============================================================
+         * NAVIGATION CONTROLS
+         * ============================================================
+         */
+
+        state.map.addControl(
+            new maplibregl.NavigationControl({
+                showCompass: true,
+                showZoom: true,
+                visualizePitch: false
+            }),
+            "top-right"
         );
 
-        // ========================================================
-        // BASE MAPS
-        // ========================================================
+        /*
+         * ============================================================
+         * STYLE LOAD
+         * ============================================================
+         */
 
-        const osmLayer = L.tileLayer(
-            "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-            {
-                maxZoom: 19,
-                attribution:
-                    "&copy; OpenStreetMap contributors"
+        state.map.once(
+            "load",
+            () => {
+                console.log(
+                    "[ProMap Navigation] TomTom Custom Style uspešno učitan."
+                );
+
+                /*
+                 * Route sources/layers dodajemo tek nakon
+                 * što se TomTom style učita.
+                 */
+
+                ensureRouteLayers();
+
+                requestAnimationFrame(
+                    () => {
+                        state.map?.resize();
+                    }
+                );
+
+                setTimeout(
+                    () => {
+                        state.map?.resize();
+                    },
+                    250
+                );
+
+                setTimeout(
+                    () => {
+                        state.map?.resize();
+                    },
+                    1000
+                );
             }
         );
 
-        const tomTomDarkLayer = L.tileLayer(
-            "/api/map/tiles/dark/{z}/{x}/{y}.png",
-            {
-                maxZoom: 22,
-                tileSize: 256,
-                attribution: "&copy; TomTom"
-            }
-        );
-
-        const satelliteLayer = L.tileLayer(
-            "/api/map/tiles/satellite/{z}/{x}/{y}.png",
-            {
-                maxZoom: 22,
-                tileSize: 256,
-                attribution:
-                    "&copy; Esri World Imagery"
-            }
-        );
-
-        // ========================================================
-        // TRAFFIC OVERLAYS
-        //
-        // OVO NISU BASE MAP LAYERI.
-        // Mogu se uključiti istovremeno.
-        // ========================================================
-
-        const trafficFlowLayer = L.tileLayer(
-            "/api/map/tiles/flow/{z}/{x}/{y}.png",
-            {
-                maxZoom: 22,
-                tileSize: 256,
-                opacity: 0.85,
-                attribution:
-                    "&copy; TomTom Traffic"
-            }
-        );
-
-        const trafficIncidentsLayer =
-            L.tileLayer(
-                "/api/map/tiles/incidents/{z}/{x}/{y}.png",
-                {
-                    maxZoom: 22,
-                    tileSize: 256,
-                    opacity: 0.95,
-                    attribution:
-                        "&copy; TomTom Traffic"
-                }
-            );
-
-        // ========================================================
-        // DEFAULT BASE MAP
-        //
-        // TomTom Dark je početna mapa.
-        // ========================================================
-
-        tomTomDarkLayer.addTo(state.map);
-
-        // ========================================================
-        // LAYER CONTROL
-        //
-        // PRVI OBJEKAT = BASE LAYERS
-        // DRUGI OBJEKAT = OVERLAYS
-        //
-        // Base layer:
-        //   samo jedan može biti aktivan.
-        //
-        // Overlay:
-        //   više može biti aktivno istovremeno.
-        // ========================================================
-
-        const baseLayers = {
-            "TomTom Dark": tomTomDarkLayer,
-            "OSM Light": osmLayer,
-            "Satellite": satelliteLayer
-        };
-
-        const overlayLayers = {
-            "Traffic Flow": trafficFlowLayer,
-            "Traffic Incidents": trafficIncidentsLayer
-        };
-
-        L.control.layers(
-            baseLayers,
-            overlayLayers,
-            {
-                collapsed: false,
-                position: "topright"
-            }
-        ).addTo(state.map);
-
-        // ========================================================
-        // ROUTE LAYERS
-        // ========================================================
-
-        state.routeLayers = [];
-
-        // ========================================================
-        // DRAG
-        // ========================================================
+        /*
+         * ============================================================
+         * MAP DRAG
+         * ============================================================
+         */
 
         state.map.on(
             "dragstart",
@@ -782,9 +760,11 @@ window.ProMap = window.ProMap || {};
             }
         );
 
-        // ========================================================
-        // MAP CLICK
-        // ========================================================
+        /*
+         * ============================================================
+         * MAP CLICK / PICK START-END
+         * ============================================================
+         */
 
         state.map.on(
             "click",
@@ -795,41 +775,43 @@ window.ProMap = window.ProMap || {};
 
                 const point = {
                     latitude:
-                        event.latlng.lat,
+                        event.lngLat.lat,
 
                     longitude:
-                        event.latlng.lng,
+                        event.lngLat.lng,
 
                     label:
-                        `${event.latlng.lat.toFixed(6)}, ` +
-                        `${event.latlng.lng.toFixed(6)}`
+                        `${event.lngLat.lat.toFixed(6)}, ` +
+                        `${event.lngLat.lng.toFixed(6)}`
                 };
 
                 if (
                     state.picking === "start"
                 ) {
-                    const startInput =
+                    const input =
                         document.getElementById(
                             "navStart"
                         );
 
-                    if (startInput) {
-                        startInput.value =
+                    if (input) {
+                        input.value =
                             point.label;
                     }
 
                     setStart(point);
-                } else if (
+                }
+
+                if (
                     state.picking ===
                     "destination"
                 ) {
-                    const endInput =
+                    const input =
                         document.getElementById(
                             "navEnd"
                         );
 
-                    if (endInput) {
-                        endInput.value =
+                    if (input) {
+                        input.value =
                             point.label;
                     }
 
@@ -839,32 +821,176 @@ window.ProMap = window.ProMap || {};
                 state.picking = null;
 
                 state.map
-                    .getContainer()
+                    .getCanvas()
                     .style.cursor = "";
 
                 showError("");
             }
         );
 
-        // ========================================================
-        // SIZE
-        // ========================================================
+        /*
+         * ============================================================
+         * MAP STYLE ERROR
+         * ============================================================
+         */
 
-        requestAnimationFrame(() => {
-            state.map?.invalidateSize();
-        });
-
-        setTimeout(() => {
-            state.map?.invalidateSize();
-        }, 250);
-
-        setTimeout(() => {
-            state.map?.invalidateSize();
-        }, 1000);
+        state.map.on(
+            "error",
+            (event) => {
+                console.error(
+                    "[ProMap Navigation] MapLibre error:",
+                    event
+                );
+            }
+        );
 
         console.log(
-            "[ProMap Navigation] Leaflet mapa uspešno kreirana."
+            "[ProMap Navigation] MapLibre mapa kreirana."
         );
+    }
+
+    function ensureRouteLayers() {
+        if (!state.map) {
+            return;
+        }
+
+        if (
+            !state.map.isStyleLoaded()
+        ) {
+            return;
+        }
+
+        /*
+         * ============================================================
+         * ROUTE SOURCE
+         * ============================================================
+         */
+
+        if (
+            !state.map.getSource(
+                "promap-routes"
+            )
+        ) {
+            state.map.addSource(
+                "promap-routes",
+                {
+                    type: "geojson",
+
+                    data: {
+                        type: "FeatureCollection",
+                        features: []
+                    }
+                }
+            );
+        }
+
+        /*
+         * ============================================================
+         * ALTERNATIVE ROUTES
+         * ============================================================
+         */
+
+        if (
+            !state.map.getLayer(
+                "promap-route-alternatives"
+            )
+        ) {
+            state.map.addLayer({
+                id:
+                    "promap-route-alternatives",
+
+                type: "line",
+
+                source:
+                    "promap-routes",
+
+                filter: [
+                    "!=",
+                    [
+                        "get",
+                        "routeIndex"
+                    ],
+                    state.selectedRouteIndex
+                ],
+
+                layout: {
+                    "line-cap": "round",
+                    "line-join": "round"
+                },
+
+                paint: {
+                    "line-color":
+                        "#10b981",
+
+                    "line-width": 5,
+
+                    "line-opacity": 0.30
+                }
+            });
+        }
+
+        /*
+         * ============================================================
+         * SELECTED ROUTE
+         * ============================================================
+         */
+
+        if (
+            !state.map.getLayer(
+                "promap-route-active"
+            )
+        ) {
+            state.map.addLayer({
+                id:
+                    "promap-route-active",
+
+                type: "line",
+
+                source:
+                    "promap-routes",
+
+                filter: [
+                    "==",
+                    [
+                        "get",
+                        "routeIndex"
+                    ],
+                    state.selectedRouteIndex
+                ],
+
+                layout: {
+                    "line-cap": "round",
+                    "line-join": "round"
+                },
+
+                paint: {
+                    "line-color":
+                        "#10b981",
+
+                    "line-width": 8,
+
+                    "line-opacity": 0.96,
+
+                    "line-blur": 0.15
+                }
+            });
+        }
+
+        /*
+         * Route mora biti iznad TomTom style slojeva.
+         */
+
+        try {
+            state.map.moveLayer(
+                "promap-route-alternatives"
+            );
+
+            state.map.moveLayer(
+                "promap-route-active"
+            );
+        } catch {
+            // ignore
+        }
     }
 
     // ============================================================
@@ -1378,14 +1504,22 @@ window.ProMap = window.ProMap || {};
     // ============================================================
 
     function clearRouteLayers() {
-        for (
-            const layer of state.routeLayers
+        if (
+            !state.map ||
+            !state.map.isStyleLoaded()
         ) {
-            try {
-                layer.remove();
-            } catch {
-                // ignore
-            }
+            state.routeLayers = [];
+            state.routeCoordinates = [];
+            state.routeCumulativeDistances = [];
+            return;
+        }
+
+        const source = state.map.getSource("promap-routes");
+        if (source) {
+            source.setData({
+                type: "FeatureCollection",
+                features: []
+            });
         }
 
         state.routeLayers = [];
@@ -1564,31 +1698,52 @@ window.ProMap = window.ProMap || {};
     }
 
     function updateRouteLayerStyles() {
-        for (
-            const entry of state.routeLayers
+        if (
+            !state.map ||
+            !state.map.isStyleLoaded()
         ) {
-            entry.layer.setStyle({
-                weight:
-                    entry.index ===
-                        state.selectedRouteIndex
-                        ? 7
-                        : 4,
+            return;
+        }
 
-                opacity:
-                    entry.index ===
-                        state.selectedRouteIndex
-                        ? 0.95
-                        : 0.35
-            });
+        const active =
+            state.map.getLayer(
+                "promap-route-active"
+            );
 
-            if (
-                entry.index ===
-                state.selectedRouteIndex
-            ) {
-                entry.layer.bringToFront();
-            }
+        const alternatives =
+            state.map.getLayer(
+                "promap-route-alternatives"
+            );
+
+        if (active) {
+            state.map.setFilter(
+                "promap-route-active",
+                [
+                    "==",
+                    [
+                        "get",
+                        "routeIndex"
+                    ],
+                    state.selectedRouteIndex
+                ]
+            );
+        }
+
+        if (alternatives) {
+            state.map.setFilter(
+                "promap-route-alternatives",
+                [
+                    "!=",
+                    [
+                        "get",
+                        "routeIndex"
+                    ],
+                    state.selectedRouteIndex
+                ]
+            );
         }
     }
+
 
     function routeViolations(route) {
         if (
@@ -2825,8 +2980,7 @@ window.ProMap = window.ProMap || {};
         fit = false
     ) {
         const routes =
-            state.routeResponse
-                ?.routes;
+            state.routeResponse?.routes;
 
         if (
             !Array.isArray(routes) ||
@@ -2848,6 +3002,8 @@ window.ProMap = window.ProMap || {};
 
         buildRouteCumulativeDistances();
 
+        ensureRouteLayers();
+
         updateRouteLayerStyles();
 
         updateSelectedRouteUi(
@@ -2860,19 +3016,35 @@ window.ProMap = window.ProMap || {};
 
         if (
             fit &&
-            state.routeCoordinates
-                .length > 0 &&
+            state.routeCoordinates.length > 0 &&
             state.map
         ) {
+            const bounds =
+                new maplibregl.LngLatBounds();
+
+            for (
+                const [lat, lng]
+                of state.routeCoordinates
+            ) {
+                bounds.extend([
+                    lng,
+                    lat
+                ]);
+            }
+
             state.map.fitBounds(
-                L.latLngBounds(
-                    state.routeCoordinates
-                ),
+                bounds,
                 {
-                    padding: [
-                        30,
-                        30
-                    ]
+                    padding: {
+                        top: 110,
+                        bottom: 100,
+                        left: 80,
+                        right: 80
+                    },
+
+                    maxZoom: 15,
+
+                    duration: 800
                 }
             );
         }
@@ -2885,8 +3057,6 @@ window.ProMap = window.ProMap || {};
     function renderRouteResponse(
         response
     ) {
-        clearRouteLayers();
-
         if (
             !response ||
             !Array.isArray(
@@ -2899,16 +3069,34 @@ window.ProMap = window.ProMap || {};
             );
         }
 
+        if (
+            !state.map
+        ) {
+            throw new Error(
+                "Navigation mapa nije inicijalizovana."
+            );
+        }
+
+        if (
+            !state.map.isStyleLoaded()
+        ) {
+            throw new Error(
+                "TomTom mapa još nije učitana."
+            );
+        }
+
+        ensureRouteLayers();
+
         state.routeResponse =
             response;
 
         state.maneuverIndex = 0;
+
         state.routeProgressMeters = 0;
 
         const requestedIndex =
             Number(
-                response.selectedRouteIndex ??
-                0
+                response.selectedRouteIndex ?? 0
             );
 
         state.selectedRouteIndex =
@@ -2921,67 +3109,104 @@ window.ProMap = window.ProMap || {};
                 ? requestedIndex
                 : 0;
 
-        response.routes.forEach(
-            (route, index) => {
-                const coordinates =
-                    geometryToLatLngs(
-                        route.geometry
-                    );
+        /*
+         * ============================================================
+         * GEOJSON ZA MAPLIBRE
+         * ============================================================
+         */
 
-                if (
-                    !coordinates.length
-                ) {
-                    return;
-                }
+        const features =
+            response.routes
+                .map(
+                    (route, index) => {
+                        let geometry =
+                            route.geometry;
 
-                const layer =
-                    L.polyline(
-                        coordinates,
-                        {
-                            weight:
-                                index ===
-                                    state.selectedRouteIndex
-                                    ? 7
-                                    : 4,
-
-                            opacity:
-                                index ===
-                                    state.selectedRouteIndex
-                                    ? 0.95
-                                    : 0.35,
-
-                            className:
-                                index ===
-                                    state.selectedRouteIndex
-                                    ? "pm-route-active"
-                                    : "pm-route-alternative"
+                        if (
+                            typeof geometry ===
+                            "string"
+                        ) {
+                            try {
+                                geometry =
+                                    JSON.parse(
+                                        geometry
+                                    );
+                            } catch {
+                                return null;
+                            }
                         }
-                    ).addTo(
-                        state.map
-                    );
 
-                layer.on(
-                    "click",
-                    () => {
-                        selectRoute(
-                            index,
-                            false
-                        );
+                        if (
+                            geometry?.type ===
+                            "Feature"
+                        ) {
+                            geometry =
+                                geometry.geometry;
+                        }
+
+                        if (
+                            !geometry ||
+                            !Array.isArray(
+                                geometry.coordinates
+                            )
+                        ) {
+                            return null;
+                        }
+
+                        return {
+                            type:
+                                "Feature",
+
+                            properties: {
+                                routeIndex:
+                                    index
+                            },
+
+                            geometry
+                        };
                     }
-                );
+                )
+                .filter(Boolean);
 
-                state.routeLayers.push({
-                    index,
-                    layer
-                });
-            }
-        );
+        const source =
+            state.map.getSource(
+                "promap-routes"
+            );
+
+        if (!source) {
+            ensureRouteLayers();
+        }
+
+        const routeSource =
+            state.map.getSource(
+                "promap-routes"
+            );
+
+        if (!routeSource) {
+            throw new Error(
+                "MapLibre route source nije kreiran."
+            );
+        }
+
+        routeSource.setData({
+            type:
+                "FeatureCollection",
+
+            features
+        });
+
+        /*
+         * ============================================================
+         * SELECTED ROUTE
+         * ============================================================
+         */
 
         selectRoute(
             state.selectedRouteIndex,
             true
         );
     }
+
 
     async function calculateRoute({
         silent = false
@@ -3345,50 +3570,62 @@ window.ProMap = window.ProMap || {};
             return;
         }
 
+        const bounds =
+            new maplibregl.LngLatBounds();
+
         if (
-            state.routeCoordinates
-                .length > 0
+            state.routeCoordinates.length > 0
         ) {
+            for (
+                const [lat, lng]
+                of state.routeCoordinates
+            ) {
+                bounds.extend([
+                    lng,
+                    lat
+                ]);
+            }
+
             state.map.fitBounds(
-                L.latLngBounds(
-                    state.routeCoordinates
-                ),
+                bounds,
                 {
-                    padding: [
-                        30,
-                        30
-                    ]
+                    padding: {
+                        top: 110,
+                        bottom: 100,
+                        left: 80,
+                        right: 80
+                    },
+
+                    maxZoom: 15,
+
+                    duration: 700
                 }
             );
 
             return;
         }
 
-        const points = [];
-
         if (state.start) {
-            points.push([
-                state.start.latitude,
-                state.start.longitude
+            bounds.extend([
+                state.start.longitude,
+                state.start.latitude
             ]);
         }
 
         if (state.destination) {
-            points.push([
-                state.destination.latitude,
-                state.destination.longitude
+            bounds.extend([
+                state.destination.longitude,
+                state.destination.latitude
             ]);
         }
 
-        if (points.length > 0) {
+        if (!bounds.isEmpty()) {
             state.map.fitBounds(
-                L.latLngBounds(points),
+                bounds,
                 {
-                    padding: [
-                        30,
-                        30
-                    ],
-                    maxZoom: 14
+                    padding: 70,
+                    maxZoom: 14,
+                    duration: 600
                 }
             );
         }
