@@ -118,7 +118,8 @@ window.ProMap = window.ProMap || {};
     const MAPLIBRE_CSS_ID = "promap-maplibre-css";
     const MAPLIBRE_MODULE_URL = "https://unpkg.com/maplibre-gl@6.10.0/dist/maplibre-gl.mjs";
 
-    //const TOMTOM_STYLE_ENDPOINT = "/api/map/tomtom/style";
+    const TOMTOM_STYLE_ENDPOINT = "/styles/street_driving_dark_orbis_draft.json";
+
     const TOMTOM_LOCAL_STYLE = "/styles/street_driving_dark_orbis_draft.json";
 
     const TOMTOM_PROXY_ENDPOINT = "/api/map/tomtom-proxy";
@@ -537,23 +538,81 @@ window.ProMap = window.ProMap || {};
         }
     }
 
+    function cleanTomTomUrl(value) {
+        try {
+            const url =
+                new URL(
+                    value,
+                    window.location.origin
+                );
+
+            url.searchParams.delete("key");
+            url.searchParams.delete("apiKey");
+
+            return url.toString();
+        }
+        catch {
+            return String(
+                value || ""
+            );
+        }
+    }
+
+
     function tomTomResourceTransform(url) {
         try {
-            const resolved = new URL(url, window.location.origin);
+            const resolved =
+                new URL(
+                    url,
+                    window.location.origin
+                );
 
-            if (
-                resolved.hostname === "api.tomtom.com" ||
-                resolved.hostname.endsWith(".api.tomtom.com")
-            ) {
-                const clean = cleanTomTomUrl(resolved.toString());
-                return `${TOMTOM_PROXY_ENDPOINT}?url=${encodeURIComponent(clean)}`;
+            const isTomTom =
+                resolved.hostname ===
+                "api.tomtom.com" ||
+                resolved.hostname.endsWith(
+                    ".api.tomtom.com"
+                );
+
+            if (!isTomTom) {
+                return url;
             }
-        } catch {
-            // Return the original URL below.
-        }
 
-        return url;
+            /*
+             * Ukloni eventualni key/API key iz upstream URL-a.
+             * Ključ ostaje samo na serveru.
+             */
+            resolved.searchParams.delete("key");
+            resolved.searchParams.delete("apiKey");
+
+       
+            const proxy =
+                new URL(
+                    TOMTOM_PROXY_ENDPOINT,
+                    window.location.origin
+                );
+
+            proxy.searchParams.set(
+                "url",
+                resolved.toString()
+            );
+
+            return proxy.toString();
+        }
+        catch (error) {
+            console.error(
+                "[ProMap Navigation] " +
+                "TomTom URL transform failed:",
+                {
+                    url,
+                    error
+                }
+            );
+
+            return url;
+        }
     }
+
 
     function prepareTomTomHost(mapElement) {
         if (state.tomTom.host) {
@@ -663,11 +722,12 @@ window.ProMap = window.ProMap || {};
 
 
     async function loadTomTomCustomStyle(mapElement) {
-        if (
-            state.tomTom.ready &&
-            state.tomTom.map
-        ) {
+        if (state.tomTom.ready && state.tomTom.map) {
             return state.tomTom.map;
+        }
+
+        if (state.tomTom.failed) {
+            return null;
         }
 
         if (state.tomTom.loading) {
@@ -675,20 +735,26 @@ window.ProMap = window.ProMap || {};
         }
 
         state.tomTom.loading = (async () => {
+            const maplibregl =
+                await loadMapLibre();
 
-            const maplibregl = await loadMapLibre();
-            const host = prepareTomTomHost(mapElement);
+            const host =
+                prepareTomTomHost(mapElement);
 
-            const response = await fetch(TOMTOM_LOCAL_STYLE,
-                {
-                    method: "GET",
-                    headers: {
-                        Accept:
-                            "application/json"
-                    },
-                    cache: "no-store"
-                }
-            );
+            const response =
+                await fetch(
+                    TOMTOM_STYLE_ENDPOINT,
+                    {
+                        method: "GET",
+                        headers: {
+                            Accept:
+                                "application/json"
+                        },
+                        cache: "no-store",
+                        credentials:
+                            "same-origin"
+                    }
+                );
 
             if (!response.ok) {
                 throw new Error(
@@ -696,7 +762,7 @@ window.ProMap = window.ProMap || {};
                 );
             }
 
-            let style =
+            const style =
                 await response.json();
 
             if (
@@ -709,22 +775,44 @@ window.ProMap = window.ProMap || {};
                 );
             }
 
-            style = normalizeTomTomCustomStyle(style);
+            /*
+             * BITNO:
+             *
+             * Ne menjamo glyphs/sources/sprite URL-ove.
+             *
+             * MapLibre mora sam da zameni:
+             *
+             *   {fontstack}
+             *   {range}
+             *   {z}
+             *   {x}
+             *   {y}
+             *
+             * pre nego što transformRequest prebaci zahtev
+             * na naš server-side TomTom proxy.
+             */
 
-            console.log("[ProMap Navigation] " + "TomTom custom style normalized:",
+            console.log(
+                "[ProMap Navigation] " +
+                "TomTom local style loaded:",
                 {
-                    glyphs: style.glyphs,
-                    sprite: style.sprite || null,
-                    sources: style.sources ? Object.keys(style.sources) : [],
-                    layers: style.layers.length
+                    version:
+                        style.version,
+                    layers:
+                        style.layers.length,
+                    glyphs:
+                        style.glyphs || null,
+                    sprite:
+                        style.sprite || null,
+                    sources:
+                        style.sources
+                            ? Object.keys(
+                                style.sources
+                            )
+                            : []
                 }
             );
 
-            /*
-             * ========================================================
-             * MAPLIBRE MAP
-             * ========================================================
-             */
             const map =
                 new maplibregl.Map({
                     container:
@@ -734,12 +822,9 @@ window.ProMap = window.ProMap || {};
                         style,
 
                     center: [
-                        DEFAULTS
-                            .start
+                        DEFAULTS.start
                             .longitude,
-
-                        DEFAULTS
-                            .start
+                        DEFAULTS.start
                             .latitude
                     ],
 
@@ -775,51 +860,84 @@ window.ProMap = window.ProMap || {};
                     preserveDrawingBuffer:
                         false,
 
-                    /*
-                     * Ako lokalni style JSON
-                     * sadrži TomTom URL-ove,
-                     * prebaci ih kroz naš backend.
-                     */
                     transformRequest:
-                        (url) => ({
-                            url:
+                        (url, resourceType) => {
+                            const transformed =
                                 tomTomResourceTransform(
                                     url
-                                )
-                        })
+                                );
+
+                            console.debug(
+                                "[ProMap Navigation] " +
+                                "Map resource:",
+                                {
+                                    resourceType,
+                                    original:
+                                        url,
+                                    transformed
+                                }
+                            );
+
+                            return {
+                                url:
+                                    transformed
+                            };
+                        }
                 });
 
             state.tomTom.map =
                 map;
 
-            /*
-             * ========================================================
-             * LOAD EVENT
-             * ========================================================
-             */
             await new Promise(
-                (
-                    resolve,
-                    reject
-                ) => {
-                    let completed =
-                        false;
+                (resolve, reject) => {
+                    let settled = false;
+
+                    const cleanup =
+                        () => {
+                            window.clearTimeout(
+                                timer
+                            );
+                        };
+
+                    const finishResolve =
+                        () => {
+                            if (settled) {
+                                return;
+                            }
+
+                            settled = true;
+                            cleanup();
+
+                            resolve();
+                        };
+
+                    const finishReject =
+                        (error) => {
+                            if (settled) {
+                                return;
+                            }
+
+                            settled = true;
+                            cleanup();
+
+                            reject(
+                                error instanceof Error
+                                    ? error
+                                    : new Error(
+                                        String(
+                                            error ||
+                                            "MapLibre error."
+                                        )
+                                    )
+                            );
+                        };
 
                     const timer =
                         window.setTimeout(
                             () => {
-                                if (
-                                    completed
-                                ) {
-                                    return;
-                                }
-
-                                completed =
-                                    true;
-
-                                reject(
+                                finishReject(
                                     new Error(
-                                        "TomTom Dark lokalni style timeout."
+                                        "TomTom Dark lokalni style nije učitan u roku od 15 sekundi."
                                     )
                                 );
                             },
@@ -829,20 +947,12 @@ window.ProMap = window.ProMap || {};
                     map.once(
                         "load",
                         () => {
-                            if (
-                                completed
-                            ) {
-                                return;
-                            }
-
-                            completed =
-                                true;
-
-                            window.clearTimeout(
-                                timer
+                            console.log(
+                                "[ProMap Navigation] " +
+                                "TOMTOM CUSTOM DARK STYLE LOADED"
                             );
 
-                            resolve();
+                            finishResolve();
                         }
                     );
 
@@ -851,27 +961,56 @@ window.ProMap = window.ProMap || {};
                         (event) => {
                             const error =
                                 event?.error ||
-                                event;
+                                null;
 
-                            state.tomTom
-                                .lastError =
-                                error;
+                            const details = {
+                                message:
+                                    error?.message ||
+                                    String(error || ""),
+                                status:
+                                    error?.status ||
+                                    error?.statusCode ||
+                                    null,
+                                url:
+                                    error?.url ||
+                                    error?.response?.url ||
+                                    event?.source?.url ||
+                                    null,
+                                sourceId:
+                                    event?.sourceId ||
+                                    null,
+                                source:
+                                    event?.source ||
+                                    null
+                            };
+
+                            state.tomTom.lastError =
+                                error || event;
 
                             console.error(
                                 "[ProMap Navigation] " +
-                                "TomTom resource error:",
-                                error
+                                "TOMTOM CUSTOM STYLE RESOURCE ERROR:",
+                                details,
+                                event
+                            );
+
+                            /*
+                             * Resource greška mora odmah da prekine
+                             * inicijalizaciju. Ne čekamo 15 sekundi.
+                             */
+                            finishReject(
+                                error instanceof Error
+                                    ? error
+                                    : new Error(
+                                        details.message ||
+                                        "TomTom resource error."
+                                    )
                             );
                         }
                     );
                 }
             );
 
-            /*
-             * ========================================================
-             * READY
-             * ========================================================
-             */
             state.tomTom.ready =
                 true;
 
@@ -889,11 +1028,6 @@ window.ProMap = window.ProMap || {};
                 "TomTom Dark · Map Maker Draft"
             );
 
-            console.log(
-                "[ProMap Navigation] " +
-                "TOMTOM DARK MAP LOADED FROM LOCAL STYLE JSON"
-            );
-
             return map;
         })();
 
@@ -909,7 +1043,7 @@ window.ProMap = window.ProMap || {};
 
             console.error(
                 "[ProMap Navigation] " +
-                "TomTom lokalni Dark style nije učitan:",
+                "TomTom local custom style FAILED:",
                 error
             );
 
@@ -917,13 +1051,22 @@ window.ProMap = window.ProMap || {};
                 false
             );
 
+            /*
+             * Trenutno NE prebacujemo automatski
+             * na generic TomTom night raster.
+             *
+             * Želimo da vidimo stvarnu grešku.
+             */
+            removeTomTomFallback();
+
             setText(
                 "engineFooter",
-                "TomTom Dark Style ERROR"
+                "TomTom Custom Style ERROR"
             );
 
             showError(
-                "Nije moguće učitati /styles/street_driving_dark_orbis_draft.json."
+                error?.message ||
+                "TomTom custom style nije moguće učitati."
             );
 
             return null;
@@ -933,7 +1076,6 @@ window.ProMap = window.ProMap || {};
                 null;
         }
     }
-
 
     async function activateTomTomBase(
         mapElement
