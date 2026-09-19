@@ -7,7 +7,9 @@ window.ProMap = window.ProMap || {};
         return;
     }
 
-    const root = document.querySelector('[data-module="navigation"]');
+    const root = document.querySelector(
+        '[data-module="navigation"]'
+    );
 
     if (!root) {
         return;
@@ -17,8 +19,32 @@ window.ProMap = window.ProMap || {};
 
     const $ = (id) => document.getElementById(id);
 
+    /*
+     * Server vraća custom TomTom style URL.
+     *
+     * API key nikada nije u ovom JavaScript fajlu.
+     */
+    const TOMTOM_STYLE_FALLBACK =
+        "/api/map/tomtom/style";
+
+    /*
+     * MapLibre učitava dodatne TomTom style/source/sprite/glyph
+     * resurse. Oni prolaze kroz server-side proxy tako da API
+     * key ostaje na backendu.
+     */
+    const TOMTOM_PROXY_PREFIX =
+        "/api/map/tomtom-proxy";
+
     const state = {
         map: null,
+
+        /*
+         * TomTom custom vector map.
+         */
+        tomTomMap: null,
+        tomTomHost: null,
+        tomTomFallbackLayer: null,
+
         start: null,
         destination: null,
 
@@ -34,22 +60,18 @@ window.ProMap = window.ProMap || {};
         maneuvers: [],
         maneuverIndex: 0,
 
-        routeProgressMeters: 0,
-        routeCumulativeDistances: [],
-
+        routing: false,
+        live: false,
         liveFollow: true,
-        profile: "truck",
 
         picking: null,
+
+        lastRerouteAt: 0,
 
         geocodeTimers: {
             start: null,
             end: null
-        },
-
-        routing: false,
-        live: false,
-        lastRerouteAt: 0
+        }
     };
 
     const DEFAULTS = {
@@ -69,7 +91,7 @@ window.ProMap = window.ProMap || {};
     const PRESETS = {
         "40t": {
             weight: 40,
-            height: 4.0,
+            height: 4,
             width: 2.55,
             length: 16.5,
             axleLoad: 10,
@@ -81,7 +103,7 @@ window.ProMap = window.ProMap || {};
             weight: 12,
             height: 3.8,
             width: 2.55,
-            length: 12.0,
+            length: 12,
             axleLoad: 8,
             axles: 3,
             maxSpeed: 90
@@ -91,7 +113,7 @@ window.ProMap = window.ProMap || {};
             weight: 7.5,
             height: 3.5,
             width: 2.5,
-            length: 9.0,
+            length: 9,
             axleLoad: 7,
             axles: 2,
             maxSpeed: 90
@@ -101,12 +123,16 @@ window.ProMap = window.ProMap || {};
             weight: 3.5,
             height: 3.2,
             width: 2.2,
-            length: 7.0,
+            length: 7,
             axleLoad: 4,
             axles: 2,
             maxSpeed: 90
         }
     };
+
+    // ============================================================
+    // COMMON HELPERS
+    // ============================================================
 
     function setText(id, value) {
         const element = $(id);
@@ -120,7 +146,7 @@ window.ProMap = window.ProMap || {};
         const element = $(id);
 
         if (element) {
-            element.hidden = hidden;
+            element.hidden = Boolean(hidden);
         }
     }
 
@@ -131,7 +157,9 @@ window.ProMap = window.ProMap || {};
             return fallback;
         }
 
-        const value = Number.parseFloat(element.value);
+        const value = Number.parseFloat(
+            element.value
+        );
 
         return Number.isFinite(value)
             ? value
@@ -158,14 +186,17 @@ window.ProMap = window.ProMap || {};
         element.hidden = !message;
     }
 
-    function setGpsStatus(text, kind = "") {
+    function setGpsStatus(
+        value,
+        kind = ""
+    ) {
         const element = $("gpsStatus");
 
         if (!element) {
             return;
         }
 
-        element.textContent = text;
+        element.textContent = value;
 
         element.classList.remove(
             "ready",
@@ -178,14 +209,17 @@ window.ProMap = window.ProMap || {};
         }
     }
 
-    function setEngine(engine, usedFallback = false) {
-        const normalized = String(
-            engine || "PostGIS"
-        );
+    function setEngine(
+        engine,
+        usedFallback = false
+    ) {
+        const normalized =
+            String(engine || "PostGIS");
 
-        const summary = usedFallback
-            ? `${normalized} · FALLBACK`
-            : normalized;
+        const display =
+            usedFallback
+                ? `${normalized} · FALLBACK`
+                : normalized;
 
         setText(
             "engineHeader",
@@ -194,20 +228,8 @@ window.ProMap = window.ProMap || {};
 
         setText(
             "summaryEngine",
-            summary
+            display
         );
-
-        const badge = $("engineBadge");
-
-        if (badge) {
-            badge.classList.remove("error");
-            badge.classList.add("ready");
-
-            badge.innerHTML =
-                `<span></span>${escapeHtml(
-                    summary.toUpperCase()
-                )}`;
-        }
 
         setText(
             "diagnosticEngine",
@@ -220,112 +242,173 @@ window.ProMap = window.ProMap || {};
                 ? "DA"
                 : "NE"
         );
+
+        const badge =
+            $("engineBadge");
+
+        if (badge) {
+            badge.classList.remove(
+                "error"
+            );
+
+            badge.classList.add(
+                "ready"
+            );
+
+            badge.innerHTML =
+                `<span></span>${escapeHtml(
+                    display.toUpperCase()
+                )}`;
+        }
+
+        setText(
+            "engineFooter",
+            usedFallback
+                ? "OSRM fallback"
+                : "Graph protected"
+        );
     }
 
-    function setRoutingUi(routing) {
-        state.routing = routing;
+    function setRoutingUi(
+        isRouting
+    ) {
+        state.routing =
+            isRouting;
 
-        const button = $("calcRoute");
+        const button =
+            $("calcRoute");
 
         if (!button) {
             return;
         }
 
-        button.disabled = routing;
+        button.disabled =
+            isRouting;
 
-        const label =
-            button.querySelector("strong");
+        const strong =
+            button.querySelector(
+                "strong"
+            );
 
-        if (label) {
-            if (routing) {
-                label.textContent =
-                    "Računam rutu…";
-            } else {
-                label.textContent =
-                    state.profile === "truck"
+        if (strong) {
+            strong.textContent =
+                isRouting
+                    ? "Računam rutu…"
+                    : state.profile === "truck"
                         ? "Izračunaj truck rutu"
                         : "Izračunaj auto rutu";
-            }
         }
     }
 
-    function formatDistance(meters) {
-        const value = Number(meters);
+    function formatDistance(
+        meters
+    ) {
+        if (
+            window.ProMap.Maneuvers
+                ?.formatDistance
+        ) {
+            return window.ProMap.Maneuvers
+                .formatDistance(
+                    meters
+                );
+        }
 
-        if (!Number.isFinite(value)) {
+        const value =
+            Number(meters);
+
+        if (
+            !Number.isFinite(
+                value
+            )
+        ) {
             return "—";
         }
 
-        if (window.ProMap.Maneuvers?.formatDistance) {
-            return window.ProMap.Maneuvers.formatDistance(
+        if (
+            value < 1000
+        ) {
+            return `${Math.round(
                 value
-            );
+            )} m`;
         }
 
-        if (value >= 1000) {
-            return `${(
-                value / 1000
-            ).toFixed(
-                value >= 10000 ? 0 : 1
-            )} km`;
-        }
-
-        return `${Math.round(value)} m`;
+        return `${(
+            value / 1000
+        ).toFixed(1)} km`;
     }
 
-    function formatDuration(seconds) {
-        const value = Number(seconds);
+    function formatDuration(
+        seconds
+    ) {
+        if (
+            window.ProMap.Maneuvers
+                ?.formatDuration
+        ) {
+            return window.ProMap.Maneuvers
+                .formatDuration(
+                    seconds
+                );
+        }
 
-        if (!Number.isFinite(value)) {
+        const value =
+            Number(seconds);
+
+        if (
+            !Number.isFinite(
+                value
+            )
+        ) {
             return "—";
         }
 
-        if (window.ProMap.Maneuvers?.formatDuration) {
-            return window.ProMap.Maneuvers.formatDuration(
-                value
+        const minutes =
+            Math.max(
+                0,
+                Math.round(
+                    value / 60
+                )
             );
+
+        if (
+            minutes < 60
+        ) {
+            return `${minutes} min`;
         }
 
-        const minutes = Math.max(
-            0,
-            Math.round(value / 60)
-        );
-
-        const hours = Math.floor(
+        return `${Math.floor(
             minutes / 60
-        );
-
-        const remainder = minutes % 60;
-
-        return hours > 0
-            ? `${hours} h ${String(
-                remainder
-            ).padStart(2, "0")} min`
-            : `${minutes} min`;
+        )} h ${minutes % 60} min`;
     }
 
     function formatEta(
         value,
-        durationSeconds = null
+        durationSeconds
     ) {
         let date = null;
 
         if (value) {
-            date = new Date(value);
-        } else if (
+            date = new Date(
+                value
+            );
+        }
+        else if (
             Number.isFinite(
                 Number(durationSeconds)
             )
         ) {
-            date = new Date(
-                Date.now() +
-                Number(durationSeconds) * 1000
-            );
+            date =
+                new Date(
+                    Date.now() +
+                    Number(durationSeconds) *
+                    1000
+                );
         }
 
         if (
             !date ||
-            Number.isNaN(date.getTime())
+            Number.isNaN(
+                date.getTime()
+            )
         ) {
             return "—";
         }
@@ -336,29 +419,43 @@ window.ProMap = window.ProMap || {};
                 hour: "2-digit",
                 minute: "2-digit"
             }
-        ).format(date);
+        ).format(
+            date
+        );
     }
 
-    function normalizePoint(point) {
+    // ============================================================
+    // COORDINATES
+    // ============================================================
+
+    function normalizePoint(
+        point
+    ) {
         if (!point) {
             return null;
         }
 
-        const latitude = Number(
-            point.latitude ??
-            point.lat ??
-            point.Lat
-        );
+        const latitude =
+            Number(
+                point.latitude ??
+                point.lat ??
+                point.Lat
+            );
 
-        const longitude = Number(
-            point.longitude ??
-            point.lon ??
-            point.Lon
-        );
+        const longitude =
+            Number(
+                point.longitude ??
+                point.lon ??
+                point.Lon
+            );
 
         if (
-            !Number.isFinite(latitude) ||
-            !Number.isFinite(longitude) ||
+            !Number.isFinite(
+                latitude
+            ) ||
+            !Number.isFinite(
+                longitude
+            ) ||
             latitude < -90 ||
             latitude > 90 ||
             longitude < -180 ||
@@ -379,72 +476,127 @@ window.ProMap = window.ProMap || {};
         };
     }
 
-    function parseCoordinateText(value) {
+    function parseCoordinateText(
+        value
+    ) {
         const text =
-            String(value || "").trim();
+            String(value || "")
+                .trim();
 
-        const match = text.match(
-            /^\s*(-?\d+(?:[.,]\d+)?)\s*[,;]\s*(-?\d+(?:[.,]\d+)?)\s*$/
-        );
+        const match =
+            text.match(
+                /^\s*(-?\d+(?:[.,]\d+)?)\s*[,;]\s*(-?\d+(?:[.,]\d+)?)\s*$/
+            );
 
         if (!match) {
             return null;
         }
 
         return normalizePoint({
-            latitude: Number(
-                match[1].replace(",", ".")
-            ),
+            latitude:
+                Number(
+                    match[1].replace(
+                        ",",
+                        "."
+                    )
+                ),
 
-            longitude: Number(
-                match[2].replace(",", ".")
-            )
+            longitude:
+                Number(
+                    match[2].replace(
+                        ",",
+                        "."
+                    )
+                )
         });
     }
 
-    function geometryToLatLngs(geometry) {
+    // ============================================================
+    // GEOMETRY
+    // ============================================================
+
+    function geometryToLatLngs(
+        geometry
+    ) {
         if (!geometry) {
             return [];
         }
 
-        let value = geometry;
+        let value =
+            geometry;
 
-        if (typeof value === "string") {
+        if (
+            typeof value ===
+            "string"
+        ) {
             try {
-                value = JSON.parse(value);
-            } catch {
+                value =
+                    JSON.parse(
+                        value
+                    );
+            }
+            catch {
                 return [];
             }
         }
 
-        if (value?.type === "Feature") {
-            value = value.geometry;
+        if (
+            value?.type ===
+            "Feature"
+        ) {
+            value =
+                value.geometry;
         }
 
         if (
             !value ||
             !value.type ||
-            !Array.isArray(value.coordinates)
+            !Array.isArray(
+                value.coordinates
+            )
         ) {
             return [];
         }
 
-        if (value.type === "LineString") {
-            return value.coordinates
-                .filter(
-                    (point) =>
-                        Array.isArray(point) &&
-                        point.length >= 2
-                )
-                .map((point) => [
-                    Number(point[1]),
-                    Number(point[0])
-                ])
-                .filter(
-                    (point) =>
-                        Number.isFinite(point[0]) &&
-                        Number.isFinite(point[1])
-                );
+        const normalizeLine =
+            (line) =>
+                Array.isArray(line)
+                    ? line
+                        .filter(
+                            (point) =>
+                                Array.isArray(
+                                    point
+                                ) &&
+                                point.length >= 2
+                        )
+                        .map(
+                            (point) => [
+                                Number(
+                                    point[1]
+                                ),
+                                Number(
+                                    point[0]
+                                )
+                            ]
+                        )
+                        .filter(
+                            (point) =>
+                                Number.isFinite(
+                                    point[0]
+                                ) &&
+                                Number.isFinite(
+                                    point[1]
+                                )
+                        )
+                    : [];
+
+        if (
+            value.type ===
+            "LineString"
+        ) {
+            return normalizeLine(
+                value.coordinates
+            );
         }
 
         if (
@@ -452,24 +604,8 @@ window.ProMap = window.ProMap || {};
             "MultiLineString"
         ) {
             return value.coordinates
-                .flatMap((line) =>
-                    Array.isArray(line)
-                        ? line
-                            .filter(
-                                (point) =>
-                                    Array.isArray(point) &&
-                                    point.length >= 2
-                            )
-                            .map((point) => [
-                                Number(point[1]),
-                                Number(point[0])
-                            ])
-                        : []
-                )
-                .filter(
-                    (point) =>
-                        Number.isFinite(point[0]) &&
-                        Number.isFinite(point[1])
+                .flatMap(
+                    normalizeLine
                 );
         }
 
@@ -482,32 +618,55 @@ window.ProMap = window.ProMap || {};
         bLat,
         bLon
     ) {
-        const earth = 6371000;
+        const earth =
+            6371000;
 
         const dLat =
-            ((bLat - aLat) * Math.PI) / 180;
+            (
+                (bLat - aLat) *
+                Math.PI
+            ) / 180;
 
         const dLon =
-            ((bLon - aLon) * Math.PI) / 180;
+            (
+                (bLon - aLon) *
+                Math.PI
+            ) / 180;
 
         const lat1 =
-            (aLat * Math.PI) / 180;
+            (
+                aLat *
+                Math.PI
+            ) / 180;
 
         const lat2 =
-            (bLat * Math.PI) / 180;
+            (
+                bLat *
+                Math.PI
+            ) / 180;
 
         const a =
-            Math.sin(dLat / 2) ** 2 +
-            Math.cos(lat1) *
-            Math.cos(lat2) *
-            Math.sin(dLon / 2) ** 2;
+            Math.sin(
+                dLat / 2
+            ) ** 2 +
+            Math.cos(
+                lat1
+            ) *
+            Math.cos(
+                lat2
+            ) *
+            Math.sin(
+                dLon / 2
+            ) ** 2;
 
         return (
             2 *
             earth *
             Math.atan2(
                 Math.sqrt(a),
-                Math.sqrt(1 - a)
+                Math.sqrt(
+                    1 - a
+                )
             )
         );
     }
@@ -516,81 +675,74 @@ window.ProMap = window.ProMap || {};
         latitude,
         longitude
     ) {
-        if (!state.routeCoordinates.length) {
+        if (
+            !Array.isArray(
+                state.routeCoordinates
+            ) ||
+            state.routeCoordinates.length ===
+            0
+        ) {
             return null;
         }
 
-        let best = Infinity;
+        let best =
+            Infinity;
 
         for (
-            const point of state.routeCoordinates
+            const point
+            of state.routeCoordinates
         ) {
-            best = Math.min(
-                best,
-                haversineMeters(
-                    latitude,
-                    longitude,
-                    point[0],
-                    point[1]
-                )
-            );
+            best =
+                Math.min(
+                    best,
+                    haversineMeters(
+                        latitude,
+                        longitude,
+                        point[0],
+                        point[1]
+                    )
+                );
         }
 
-        return Number.isFinite(best)
+        return Number.isFinite(
+            best
+        )
             ? best
             : null;
     }
 
-    function distanceToManeuverMeters(
-        position,
-        maneuver
-    ) {
-        if (!position || !maneuver) {
-            return null;
-        }
-
-        const latitude =
-            Number(maneuver.latitude);
-
-        const longitude =
-            Number(maneuver.longitude);
-
-        if (
-            !Number.isFinite(latitude) ||
-            !Number.isFinite(longitude)
-        ) {
-            return null;
-        }
-
-        return haversineMeters(
-            Number(position.latitude),
-            Number(position.longitude),
-            latitude,
-            longitude
-        );
-    }
+    // ============================================================
+    // GPS SERVICE
+    // ============================================================
 
     function getCurrentGpsPosition() {
         const position =
-            window.ProMap.Gps?.getPosition?.();
+            window.ProMap.Gps
+                ?.getPosition?.();
 
         if (!position) {
             return null;
         }
 
-        const latitude = Number(
-            position.latitude ??
-            position.coords?.latitude
-        );
+        const latitude =
+            Number(
+                position.latitude ??
+                position.coords?.latitude
+            );
 
-        const longitude = Number(
-            position.longitude ??
-            position.coords?.longitude
-        );
+        const longitude =
+            Number(
+                position.longitude ??
+                position.coords?.longitude
+            );
 
         if (
-            !Number.isFinite(latitude) ||
-            !Number.isFinite(longitude)
+            !Number.isFinite(
+                latitude
+            ) ||
+            !Number.isFinite(
+                longitude
+            )
         ) {
             return null;
         }
@@ -598,22 +750,470 @@ window.ProMap = window.ProMap || {};
         return {
             latitude,
             longitude,
-            accuracy: Number(
-                position.accuracy ??
-                position.coords?.accuracy
-            ),
-            heading: Number(
-                position.heading ??
-                position.coords?.heading
-            ),
-            speed: Number(
-                position.speed ??
-                position.coords?.speed
-            ),
+
+            accuracy:
+                Number(
+                    position.accuracy ??
+                    position.coords?.accuracy
+                ),
+
+            heading:
+                Number(
+                    position.heading ??
+                    position.coords?.heading
+                ),
+
+            speed:
+                Number(
+                    position.speed ??
+                    position.coords?.speed
+                ),
+
             timestamp:
                 position.timestamp ??
                 position.coords?.timestamp
         };
+    }
+
+    // ============================================================
+    // TOMTOM / MAPLIBRE
+    // ============================================================
+
+    function proxyTomTomUrl(
+        url
+    ) {
+        try {
+            const parsed =
+                new URL(
+                    url,
+                    window.location.origin
+                );
+
+            if (
+                parsed.protocol !==
+                "https:" ||
+                parsed.hostname !==
+                "api.tomtom.com"
+            ) {
+                return url;
+            }
+
+            return (
+                `${TOMTOM_PROXY_PREFIX}?url=` +
+                encodeURIComponent(
+                    parsed.toString()
+                )
+            );
+        }
+        catch {
+            return url;
+        }
+    }
+
+    function loadMapLibre() {
+        if (
+            window.maplibregl
+        ) {
+            return Promise.resolve(
+                window.maplibregl
+            );
+        }
+
+        if (
+            window.__promapMapLibrePromise
+        ) {
+            return window
+                .__promapMapLibrePromise;
+        }
+
+        window
+            .__promapMapLibrePromise =
+            new Promise(
+                (
+                    resolve,
+                    reject
+                ) => {
+
+                    const cssHref =
+                        "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css";
+
+                    const jsSrc =
+                        "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js";
+
+                    if (
+                        !document.querySelector(
+                            `link[href="${cssHref}"]`
+                        )
+                    ) {
+                        const link =
+                            document.createElement(
+                                "link"
+                            );
+
+                        link.rel =
+                            "stylesheet";
+
+                        link.href =
+                            cssHref;
+
+                        document.head.appendChild(
+                            link
+                        );
+                    }
+
+                    const existing =
+                        document.querySelector(
+                            `script[src="${jsSrc}"]`
+                        );
+
+                    if (
+                        existing
+                    ) {
+                        existing.addEventListener(
+                            "load",
+                            () =>
+                                window.maplibregl
+                                    ? resolve(
+                                        window.maplibregl
+                                    )
+                                    : reject(
+                                        new Error(
+                                            "MapLibre GL nije dostupan."
+                                        )
+                                    ),
+                            {
+                                once: true
+                            }
+                        );
+
+                        existing.addEventListener(
+                            "error",
+                            () =>
+                                reject(
+                                    new Error(
+                                        "MapLibre GL JS nije moguće učitati."
+                                    )
+                                ),
+                            {
+                                once: true
+                            }
+                        );
+
+                        return;
+                    }
+
+                    const script =
+                        document.createElement(
+                            "script"
+                        );
+
+                    script.src =
+                        jsSrc;
+
+                    script.async =
+                        true;
+
+                    script.onload =
+                        () => {
+                            if (
+                                window.maplibregl
+                            ) {
+                                resolve(
+                                    window.maplibregl
+                                );
+                            }
+                            else {
+                                reject(
+                                    new Error(
+                                        "MapLibre GL JS nije dostupan."
+                                    )
+                                );
+                            }
+                        };
+
+                    script.onerror =
+                        () =>
+                            reject(
+                                new Error(
+                                    "MapLibre GL JS CDN nije dostupan."
+                                )
+                            );
+
+                    document.head.appendChild(
+                        script
+                    );
+                }
+            );
+
+        return window
+            .__promapMapLibrePromise;
+    }
+
+    function syncTomTomBackground() {
+        if (
+            !state.map ||
+            !state.tomTomMap
+        ) {
+            return;
+        }
+
+        const center =
+            state.map.getCenter();
+
+        const zoom =
+            state.map.getZoom();
+
+        state.tomTomMap.jumpTo({
+            center: [
+                center.lng,
+                center.lat
+            ],
+            zoom
+        });
+
+        state.tomTomMap.resize();
+    }
+
+    function activateTomTomRasterFallback() {
+        if (
+            !state.map ||
+            !window.L ||
+            state.tomTomFallbackLayer
+        ) {
+            return;
+        }
+
+        state.tomTomFallbackLayer =
+            L.tileLayer(
+                "/api/map/tiles/dark/{z}/{x}/{y}.png",
+                {
+                    maxZoom: 22,
+                    tileSize: 256,
+                    attribution:
+                        "&copy; TomTom"
+                }
+            ).addTo(
+                state.map
+            );
+    }
+
+    function installTomTomBackground() {
+        if (
+            !state.map ||
+            !window.L
+        ) {
+            return;
+        }
+
+        const mapElement =
+            $("navMap");
+
+        if (!mapElement) {
+            return;
+        }
+
+        /*
+         * MapLibre renderuje background.
+         *
+         * Leaflet ostaje iznad njega i služi za:
+         * - route polyline
+         * - markers
+         * - GPS
+         * - klik
+         * - fitBounds
+         */
+        const host =
+            document.createElement(
+                "div"
+            );
+
+        host.id =
+            "navTomTomMap";
+
+        host.style.position =
+            "absolute";
+
+        host.style.inset =
+            "0";
+
+        host.style.zIndex =
+            "0";
+
+        host.style.width =
+            "100%";
+
+        host.style.height =
+            "100%";
+
+        host.style.pointerEvents =
+            "none";
+
+        host.style.overflow =
+            "hidden";
+
+        mapElement.prepend(
+            host
+        );
+
+        state.tomTomHost =
+            host;
+
+        /*
+         * Sakrij Leaflet base tile pane.
+         * Route/overlay pane-ovi ostaju aktivni.
+         */
+        const tilePane =
+            mapElement.querySelector(
+                ".leaflet-tile-pane"
+            );
+
+        if (tilePane) {
+            tilePane.style.display =
+                "none";
+        }
+
+        /*
+         * URL iz backend konfiguracije.
+         */
+        const styleUrlPromise =
+            fetch(
+                "/api/map/config",
+                {
+                    headers: {
+                        Accept:
+                            "application/json"
+                    }
+                }
+            )
+                .then(
+                    (response) => {
+                        if (
+                            !response.ok
+                        ) {
+                            throw new Error(
+                                `Map config HTTP ${response.status}`
+                            );
+                        }
+
+                        return response.json();
+                    }
+                )
+                .then(
+                    (config) =>
+                        config?.customStyleUrl ||
+                        TOMTOM_STYLE_FALLBACK
+                )
+                .catch(
+                    () =>
+                        TOMTOM_STYLE_FALLBACK
+                );
+
+        loadMapLibre()
+            .then(
+                (maplibregl) =>
+                    styleUrlPromise.then(
+                        (
+                            styleUrl
+                        ) => {
+
+                            state.tomTomMap =
+                                new maplibregl.Map(
+                                    {
+                                        container:
+                                            host,
+
+                                        style:
+                                            styleUrl,
+
+                                        center:
+                                            [
+                                                20.4633,
+                                                44.8176
+                                            ],
+
+                                        zoom:
+                                            8,
+
+                                        attributionControl:
+                                            false,
+
+                                        interactive:
+                                            false,
+
+                                        dragPan:
+                                            false,
+
+                                        scrollZoom:
+                                            false,
+
+                                        boxZoom:
+                                            false,
+
+                                        doubleClickZoom:
+                                            false,
+
+                                        dragRotate:
+                                            false,
+
+                                        keyboard:
+                                            false,
+
+                                        touchZoomRotate:
+                                            false,
+
+                                        transformRequest:
+                                            (
+                                                url
+                                            ) => ({
+                                                url:
+                                                    proxyTomTomUrl(
+                                                        url
+                                                    )
+                                            })
+                                    }
+                                );
+
+                            state.tomTomMap.on(
+                                "load",
+                                () => {
+                                    syncTomTomBackground();
+
+                                    state
+                                        .tomTomMap
+                                        .resize();
+
+                                    console.log(
+                                        "[ProMap Navigation] TomTom custom style loaded."
+                                    );
+                                }
+                            );
+
+                            state.tomTomMap.on(
+                                "error",
+                                (
+                                    event
+                                ) => {
+                                    console.error(
+                                        "[ProMap Navigation] TomTom custom style error:",
+                                        event
+                                    );
+
+                                    activateTomTomRasterFallback();
+                                }
+                            );
+                        }
+                    )
+            )
+            .catch(
+                (error) => {
+                    console.error(
+                        "[ProMap Navigation] MapLibre load error:",
+                        error
+                    );
+
+                    activateTomTomRasterFallback();
+                }
+            );
     }
 
     // ============================================================
@@ -622,457 +1222,370 @@ window.ProMap = window.ProMap || {};
 
     function initializeMap() {
         const mapElement =
-            document.getElementById("navMap");
+            $("navMap");
 
         if (!mapElement) {
             console.error(
-                "[ProMap Navigation] #navMap nije pronađen u DOM-u."
+                "[ProMap Navigation] #navMap nije pronađen."
             );
 
             return;
         }
 
-        if (!window.maplibregl) {
+        if (!window.L) {
             console.error(
-                "[ProMap Navigation] MapLibre GL JS nije učitan."
-            );
-
-            showError(
-                "MapLibre mapa nije učitana."
+                "[ProMap Navigation] Leaflet nije učitan."
             );
 
             return;
         }
 
         if (state.map) {
-            state.map.resize();
+            state.map.invalidateSize();
             return;
         }
 
-        console.log(
-            "[ProMap Navigation] Kreiram MapLibre + TomTom Custom Style mapu..."
-        );
-
-        /*
-         * ============================================================
-         * TOMTOM CUSTOM DARK STYLE
-         * ============================================================
-         *
-         * API key NE ostavljamo hardkodovan u produkciji.
-         *
-         * Za sada koristi vrednost koju si poslao.
-         * Kasnije ćemo je prebaciti u konfiguraciju.
-         */
-        const TOMTOM_STYLE_URL =
-            "https://api.tomtom.com/style/2/custom/style/" +
-            "dG9tdG9tQEBANndOMmY2c2hkWEdNUTh2dDvHAUOO8wBB8Y5JhgFOxC6O" +
-            "/drafts/0?key=VdCFpW9pl43Fn8csIhhUnaL2btMaRDfp";
-
         state.map =
-            new maplibregl.Map({
-                container: mapElement,
+            L.map(
+                mapElement,
+                {
+                    zoomControl:
+                        true,
 
-                style: TOMTOM_STYLE_URL,
-
-                center: [
-                    20.4573,
-                    44.8178
+                    preferCanvas:
+                        true
+                }
+            ).setView(
+                [
+                    44.8176,
+                    20.4633
                 ],
+                8
+            );
 
-                zoom: 8,
-
-                pitch: 0,
-
-                bearing: 0,
-
-                attributionControl: true
-            });
+        if (
+            state.map.attributionControl
+        ) {
+            state.map
+                .attributionControl
+                .addAttribution(
+                    "&copy; TomTom"
+                );
+        }
 
         /*
-         * ============================================================
-         * NAVIGATION CONTROLS
-         * ============================================================
+         * Traffic overlays i dalje idu preko Leaflet-a.
          */
+        const trafficFlowLayer =
+            L.tileLayer(
+                "/api/map/tiles/flow/{z}/{x}/{y}.png",
+                {
+                    maxZoom:
+                        22,
 
-        state.map.addControl(
-            new maplibregl.NavigationControl({
-                showCompass: true,
-                showZoom: true,
-                visualizePitch: false
-            }),
-            "top-right"
-        );
+                    tileSize:
+                        256,
 
-        /*
-         * ============================================================
-         * STYLE LOAD
-         * ============================================================
-         */
+                    opacity:
+                        0.85,
 
-        state.map.once(
-            "load",
-            () => {
-                console.log(
-                    "[ProMap Navigation] TomTom Custom Style uspešno učitan."
-                );
+                    attribution:
+                        "&copy; TomTom Traffic"
+                }
+            );
 
-                /*
-                 * Route sources/layers dodajemo tek nakon
-                 * što se TomTom style učita.
-                 */
+        const trafficIncidentsLayer =
+            L.tileLayer(
+                "/api/map/tiles/incidents/{z}/{x}/{y}.png",
+                {
+                    maxZoom:
+                        22,
 
-                ensureRouteLayers();
+                    tileSize:
+                        256,
 
-                requestAnimationFrame(
-                    () => {
-                        state.map?.resize();
-                    }
-                );
+                    opacity:
+                        0.95,
 
-                setTimeout(
-                    () => {
-                        state.map?.resize();
-                    },
-                    250
-                );
+                    attribution:
+                        "&copy; TomTom Traffic"
+                }
+            );
 
-                setTimeout(
-                    () => {
-                        state.map?.resize();
-                    },
-                    1000
-                );
+        L.control.layers(
+            null,
+            {
+                "Traffic Flow":
+                    trafficFlowLayer,
+
+                "Traffic Incidents":
+                    trafficIncidentsLayer
+            },
+            {
+                collapsed:
+                    false,
+
+                position:
+                    "topright"
             }
+        ).addTo(
+            state.map
         );
 
-        /*
-         * ============================================================
-         * MAP DRAG
-         * ============================================================
-         */
+        state.map.on(
+            "move",
+            syncTomTomBackground
+        );
+
+        state.map.on(
+            "zoom",
+            syncTomTomBackground
+        );
+
+        state.map.on(
+            "resize",
+            syncTomTomBackground
+        );
 
         state.map.on(
             "dragstart",
             () => {
-                if (state.live) {
-                    state.liveFollow = false;
+                if (
+                    state.live
+                ) {
+                    state.liveFollow =
+                        false;
                 }
             }
         );
 
-        /*
-         * ============================================================
-         * MAP CLICK / PICK START-END
-         * ============================================================
-         */
-
         state.map.on(
             "click",
             (event) => {
-                if (!state.picking) {
+                if (
+                    !state.picking
+                ) {
                     return;
                 }
 
                 const point = {
                     latitude:
-                        event.lngLat.lat,
+                        event.latlng.lat,
 
                     longitude:
-                        event.lngLat.lng,
+                        event.latlng.lng,
 
                     label:
-                        `${event.lngLat.lat.toFixed(6)}, ` +
-                        `${event.lngLat.lng.toFixed(6)}`
+                        `${event.latlng.lat.toFixed(6)}, ${event.latlng.lng.toFixed(6)}`
                 };
 
                 if (
-                    state.picking === "start"
-                ) {
-                    const input =
-                        document.getElementById(
-                            "navStart"
-                        );
-
-                    if (input) {
-                        input.value =
-                            point.label;
-                    }
-
-                    setStart(point);
-                }
-
-                if (
                     state.picking ===
-                    "destination"
+                    "start"
                 ) {
                     const input =
-                        document.getElementById(
-                            "navEnd"
-                        );
+                        $("navStart");
 
                     if (input) {
                         input.value =
                             point.label;
                     }
 
-                    setDestination(point);
+                    setStart(
+                        point
+                    );
+                }
+                else {
+                    const input =
+                        $("navEnd");
+
+                    if (input) {
+                        input.value =
+                            point.label;
+                    }
+
+                    setDestination(
+                        point
+                    );
                 }
 
-                state.picking = null;
+                state.picking =
+                    null;
 
                 state.map
-                    .getCanvas()
-                    .style.cursor = "";
+                    .getContainer()
+                    .style.cursor =
+                    "";
 
                 showError("");
             }
         );
 
-        /*
-         * ============================================================
-         * MAP STYLE ERROR
-         * ============================================================
-         */
+        installTomTomBackground();
 
-        state.map.on(
-            "error",
-            (event) => {
-                console.error(
-                    "[ProMap Navigation] MapLibre error:",
-                    event
-                );
-            }
+        requestAnimationFrame(
+            () =>
+                state.map
+                    ?.invalidateSize()
         );
 
-        console.log(
-            "[ProMap Navigation] MapLibre mapa kreirana."
+        setTimeout(
+            () =>
+                state.map
+                    ?.invalidateSize(),
+            300
         );
-    }
 
-    function ensureRouteLayers() {
-        if (!state.map) {
-            return;
-        }
-
-        if (
-            !state.map.isStyleLoaded()
-        ) {
-            return;
-        }
-
-        /*
-         * ============================================================
-         * ROUTE SOURCE
-         * ============================================================
-         */
-
-        if (
-            !state.map.getSource(
-                "promap-routes"
-            )
-        ) {
-            state.map.addSource(
-                "promap-routes",
-                {
-                    type: "geojson",
-
-                    data: {
-                        type: "FeatureCollection",
-                        features: []
-                    }
-                }
-            );
-        }
-
-        /*
-         * ============================================================
-         * ALTERNATIVE ROUTES
-         * ============================================================
-         */
-
-        if (
-            !state.map.getLayer(
-                "promap-route-alternatives"
-            )
-        ) {
-            state.map.addLayer({
-                id:
-                    "promap-route-alternatives",
-
-                type: "line",
-
-                source:
-                    "promap-routes",
-
-                filter: [
-                    "!=",
-                    [
-                        "get",
-                        "routeIndex"
-                    ],
-                    state.selectedRouteIndex
-                ],
-
-                layout: {
-                    "line-cap": "round",
-                    "line-join": "round"
-                },
-
-                paint: {
-                    "line-color":
-                        "#10b981",
-
-                    "line-width": 5,
-
-                    "line-opacity": 0.30
-                }
-            });
-        }
-
-        /*
-         * ============================================================
-         * SELECTED ROUTE
-         * ============================================================
-         */
-
-        if (
-            !state.map.getLayer(
-                "promap-route-active"
-            )
-        ) {
-            state.map.addLayer({
-                id:
-                    "promap-route-active",
-
-                type: "line",
-
-                source:
-                    "promap-routes",
-
-                filter: [
-                    "==",
-                    [
-                        "get",
-                        "routeIndex"
-                    ],
-                    state.selectedRouteIndex
-                ],
-
-                layout: {
-                    "line-cap": "round",
-                    "line-join": "round"
-                },
-
-                paint: {
-                    "line-color":
-                        "#10b981",
-
-                    "line-width": 8,
-
-                    "line-opacity": 0.96,
-
-                    "line-blur": 0.15
-                }
-            });
-        }
-
-        /*
-         * Route mora biti iznad TomTom style slojeva.
-         */
-
-        try {
-            state.map.moveLayer(
-                "promap-route-alternatives"
-            );
-
-            state.map.moveLayer(
-                "promap-route-active"
-            );
-        } catch {
-            // ignore
-        }
+        setTimeout(
+            () =>
+                state.map
+                    ?.invalidateSize(),
+            1000
+        );
     }
 
     // ============================================================
     // START / DESTINATION
     // ============================================================
 
-    function setStart(point) {
+    function setStart(
+        point
+    ) {
         const normalized =
-            normalizePoint(point);
+            normalizePoint(
+                point
+            );
 
         if (!normalized) {
             return false;
         }
 
-        state.start = normalized;
+        state.start =
+            normalized;
 
-        if ($("navStartResolved")) {
-            $("navStartResolved").textContent =
-                normalized.label ||
-                `${normalized.latitude.toFixed(6)}, ` +
-                `${normalized.longitude.toFixed(6)}`;
+        setText(
+            "navStartResolved",
+            normalized.label ||
+            `${normalized.latitude.toFixed(6)}, ${normalized.longitude.toFixed(6)}`
+        );
+
+        if (!state.map) {
+            return true;
         }
 
-        if (state.map) {
-            if (state.startMarker) {
-                state.startMarker.remove();
-            }
+        if (
+            state.startMarker
+        ) {
+            state.startMarker.remove();
+        }
 
-            state.startMarker =
-                L.marker([
+        state.startMarker =
+            L.circleMarker(
+                [
                     normalized.latitude,
                     normalized.longitude
-                ])
-                    .addTo(state.map)
-                    .bindPopup(
-                        `<strong>START</strong><br>${escapeHtml(
-                            normalized.label ||
-                            `${normalized.latitude.toFixed(6)}, ` +
-                            `${normalized.longitude.toFixed(6)}`
-                        )}`
-                    );
-        }
+                ],
+                {
+                    radius:
+                        8,
+
+                    weight:
+                        3,
+
+                    fillOpacity:
+                        1
+                }
+            )
+                .addTo(
+                    state.map
+                )
+                .bindTooltip(
+                    "START",
+                    {
+                        direction:
+                            "top",
+
+                        offset:
+                            [
+                                0,
+                                -6
+                            ],
+
+                        opacity:
+                            0.95
+                    }
+                );
 
         return true;
     }
 
-    function setDestination(point) {
+    function setDestination(
+        point
+    ) {
         const normalized =
-            normalizePoint(point);
+            normalizePoint(
+                point
+            );
 
         if (!normalized) {
             return false;
         }
 
-        state.destination = normalized;
+        state.destination =
+            normalized;
 
-        if ($("navEndResolved")) {
-            $("navEndResolved").textContent =
-                normalized.label ||
-                `${normalized.latitude.toFixed(6)}, ` +
-                `${normalized.longitude.toFixed(6)}`;
+        setText(
+            "navEndResolved",
+            normalized.label ||
+            `${normalized.latitude.toFixed(6)}, ${normalized.longitude.toFixed(6)}`
+        );
+
+        if (!state.map) {
+            return true;
         }
 
-        if (state.map) {
-            if (state.destinationMarker) {
-                state.destinationMarker.remove();
-            }
+        if (
+            state.destinationMarker
+        ) {
+            state.destinationMarker.remove();
+        }
 
-            state.destinationMarker =
-                L.marker([
+        state.destinationMarker =
+            L.circleMarker(
+                [
                     normalized.latitude,
                     normalized.longitude
-                ])
-                    .addTo(state.map)
-                    .bindPopup(
-                        `<strong>ODREDIŠTE</strong><br>${escapeHtml(
-                            normalized.label ||
-                            `${normalized.latitude.toFixed(6)}, ` +
-                            `${normalized.longitude.toFixed(6)}`
-                        )}`
-                    );
-        }
+                ],
+                {
+                    radius:
+                        8,
+
+                    weight:
+                        3,
+
+                    fillOpacity:
+                        1
+                }
+            )
+                .addTo(
+                    state.map
+                )
+                .bindTooltip(
+                    "DESTINACIJA",
+                    {
+                        direction:
+                            "top",
+
+                        offset:
+                            [
+                                0,
+                                -6
+                            ],
+
+                        opacity:
+                            0.95
+                    }
+                );
 
         return true;
     }
@@ -1081,12 +1594,12 @@ window.ProMap = window.ProMap || {};
     // GEOCODING
     // ============================================================
 
-    async function geocode(query) {
+    async function geocode(
+        query
+    ) {
         const response =
             await fetch(
-                `/api/geocode?q=${encodeURIComponent(
-                    query
-                )}&limit=5`,
+                `/api/geocode?q=${encodeURIComponent(query)}&limit=5`,
                 {
                     headers: {
                         Accept:
@@ -1095,36 +1608,40 @@ window.ProMap = window.ProMap || {};
                 }
             );
 
-        let payload = null;
-
-        try {
-            payload =
-                await response.json();
-        } catch {
-            payload = null;
-        }
-
         if (!response.ok) {
             throw new Error(
-                payload?.message ||
-                `Geocoding API HTTP ${response.status}`
+                `Geocoding HTTP ${response.status}`
             );
         }
 
-        return Array.isArray(payload)
-            ? payload
-            : [];
+        const data =
+            await response.json();
+
+        return Array.isArray(
+            data
+        )
+            ? data
+            : Array.isArray(
+                data?.results
+            )
+                ? data.results
+                : [];
     }
 
-    function clearSuggestions(target) {
-        const box = $(
+    function clearSuggestions(
+        target
+    ) {
+        const id =
             target === "start"
                 ? "navStartSuggestions"
-                : "navEndSuggestions"
-        );
+                : "navEndSuggestions";
+
+        const box =
+            $(id);
 
         if (box) {
-            box.innerHTML = "";
+            box.innerHTML =
+                "";
         }
     }
 
@@ -1132,23 +1649,28 @@ window.ProMap = window.ProMap || {};
         target,
         items
     ) {
-        const box = $(
-            target === "start"
-                ? "navStartSuggestions"
-                : "navEndSuggestions"
-        );
+        const box =
+            $(
+                target === "start"
+                    ? "navStartSuggestions"
+                    : "navEndSuggestions"
+            );
 
         if (!box) {
             return;
         }
 
-        box.innerHTML = "";
+        box.innerHTML =
+            "";
 
         for (
-            const item of items.slice(0, 5)
+            const rawItem
+            of items.slice(0, 5)
         ) {
             const point =
-                normalizePoint(item);
+                normalizePoint(
+                    rawItem
+                );
 
             if (!point) {
                 continue;
@@ -1159,38 +1681,41 @@ window.ProMap = window.ProMap || {};
                     "button"
                 );
 
-            button.type = "button";
+            button.type =
+                "button";
+
             button.className =
                 "nav-suggestion";
 
-            const display =
+            const label =
                 point.label ||
-                `${point.latitude.toFixed(6)}, ` +
-                `${point.longitude.toFixed(6)}`;
+                `${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`;
 
             button.textContent =
-                display;
+                label;
 
             button.addEventListener(
                 "click",
                 () => {
                     if (
-                        target === "start"
+                        target ===
+                        "start"
                     ) {
                         $("navStart").value =
-                            display;
+                            label;
 
                         setStart({
                             ...point,
-                            label: display
+                            label
                         });
-                    } else {
+                    }
+                    else {
                         $("navEnd").value =
-                            display;
+                            label;
 
                         setDestination({
                             ...point,
-                            label: display
+                            label
                         });
                     }
 
@@ -1202,91 +1727,119 @@ window.ProMap = window.ProMap || {};
                 }
             );
 
-            box.appendChild(button);
+            box.appendChild(
+                button
+            );
         }
     }
 
-    function scheduleGeocode(target) {
-        const input = $(
-            target === "start"
-                ? "navStart"
-                : "navEnd"
-        );
+    function scheduleGeocode(
+        target
+    ) {
+        const input =
+            $(
+                target === "start"
+                    ? "navStart"
+                    : "navEnd"
+            );
 
         if (!input) {
             return;
         }
 
         clearTimeout(
-            state.geocodeTimers[target]
+            state.geocodeTimers[
+            target
+            ]
         );
 
         const value =
             input.value.trim();
 
-        if (target === "start") {
-            state.start = null;
+        if (
+            target ===
+            "start"
+        ) {
+            state.start =
+                null;
 
-            if ($("navStartResolved")) {
-                $("navStartResolved").textContent =
-                    "Nije još potvrđeno";
-            }
-        } else {
-            state.destination = null;
+            setText(
+                "navStartResolved",
+                "Nije još potvrđeno"
+            );
+        }
+        else {
+            state.destination =
+                null;
 
-            if ($("navEndResolved")) {
-                $("navEndResolved").textContent =
-                    "Nije još potvrđeno";
-            }
+            setText(
+                "navEndResolved",
+                "Nije još potvrđeno"
+            );
         }
 
-        const coordinate =
-            parseCoordinateText(value);
+        const coordinates =
+            parseCoordinateText(
+                value
+            );
 
-        if (coordinate) {
-            if (target === "start") {
+        if (
+            coordinates
+        ) {
+            const label =
+                `${coordinates.latitude.toFixed(6)}, ${coordinates.longitude.toFixed(6)}`;
+
+            if (
+                target ===
+                "start"
+            ) {
                 setStart({
-                    ...coordinate,
-                    label:
-                        `${coordinate.latitude.toFixed(6)}, ` +
-                        `${coordinate.longitude.toFixed(6)}`
+                    ...coordinates,
+                    label
                 });
-            } else {
+            }
+            else {
                 setDestination({
-                    ...coordinate,
-                    label:
-                        `${coordinate.latitude.toFixed(6)}, ` +
-                        `${coordinate.longitude.toFixed(6)}`
+                    ...coordinates,
+                    label
                 });
             }
 
-            clearSuggestions(target);
+            clearSuggestions(
+                target
+            );
 
             return;
         }
 
-        if (value.length < 2) {
-            clearSuggestions(target);
+        if (
+            value.length < 2
+        ) {
+            clearSuggestions(
+                target
+            );
 
             return;
         }
 
-        state.geocodeTimers[target] =
+        state.geocodeTimers[
+            target
+        ] =
             window.setTimeout(
                 async () => {
                     try {
-                        const items =
-                            await geocode(
-                                value
-                            );
-
                         renderSuggestions(
                             target,
-                            items
+                            await geocode(
+                                value
+                            )
                         );
-                    } catch (error) {
+                    }
+                    catch (
+                    error
+                    ) {
                         console.warn(
-                            "Geocoding error:",
+                            "[ProMap Navigation] Geocoding error:",
                             error
                         );
                     }
@@ -1295,12 +1848,15 @@ window.ProMap = window.ProMap || {};
             );
     }
 
-    async function resolveInput(target) {
-        const input = $(
-            target === "start"
-                ? "navStart"
-                : "navEnd"
-        );
+    async function resolveInput(
+        target
+    ) {
+        const input =
+            $(
+                target === "start"
+                    ? "navStart"
+                    : "navEnd"
+            );
 
         if (!input) {
             return false;
@@ -1310,59 +1866,65 @@ window.ProMap = window.ProMap || {};
             input.value.trim();
 
         const coordinate =
-            parseCoordinateText(value);
-
-        if (coordinate) {
-            const resolved = {
-                ...coordinate,
-                label:
-                    `${coordinate.latitude.toFixed(6)}, ` +
-                    `${coordinate.longitude.toFixed(6)}`
-            };
-
-            if (target === "start") {
-                return setStart(
-                    resolved
-                );
-            }
-
-            return setDestination(
-                resolved
+            parseCoordinateText(
+                value
             );
+
+        if (
+            coordinate
+        ) {
+            const label =
+                `${coordinate.latitude.toFixed(6)}, ${coordinate.longitude.toFixed(6)}`;
+
+            return target ===
+                "start"
+                ? setStart({
+                    ...coordinate,
+                    label
+                })
+                : setDestination({
+                    ...coordinate,
+                    label
+                });
         }
 
-        if (value.length < 2) {
+        if (
+            value.length < 2
+        ) {
             return false;
         }
 
-        const items =
-            await geocode(value);
+        const results =
+            await geocode(
+                value
+            );
 
         const point =
-            normalizePoint(items[0]);
+            normalizePoint(
+                results[0]
+            );
 
         if (!point) {
             return false;
         }
 
-        const display =
+        const label =
             point.label ||
-            `${point.latitude.toFixed(6)}, ` +
-            `${point.longitude.toFixed(6)}`;
+            `${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`;
 
-        input.value = display;
+        input.value =
+            label;
 
-        if (target === "start") {
-            return setStart({
+        return target ===
+            "start"
+            ? setStart({
                 ...point,
-                label: display
+                label
+            })
+            : setDestination({
+                ...point,
+                label
             });
-        }
-
-        return setDestination({
-            ...point,
-            label: display
-        });
     }
 
     // ============================================================
@@ -1401,27 +1963,26 @@ window.ProMap = window.ProMap || {};
                     10
                 ),
 
-            axles: Math.max(
-                1,
-                Math.round(
-                    numberValue(
-                        "navAxles",
-                        5
+            axles:
+                Math.max(
+                    1,
+                    Math.round(
+                        numberValue(
+                            "navAxles",
+                            5
+                        )
                     )
-                )
-            ),
-
-            maxSpeedKmh:
-                numberValue(
-                    "navMaxSpeed",
-                    90
                 ),
 
-            isHgv: true,
-            commercial: true,
+            isHgv:
+                true,
+
+            commercial:
+                true,
 
             hazmat:
-                $("navHazmat")?.checked ??
+                $("navHazmat")
+                    ?.checked ??
                 false,
 
             adrClass:
@@ -1430,28 +1991,50 @@ window.ProMap = window.ProMap || {};
                     ?.trim() ||
                 null,
 
-            goods: null,
-
             vehicleClass:
-                "HeavyGoods"
+                "HeavyGoods",
+
+            maxSpeedKmh:
+                numberValue(
+                    "navMaxSpeed",
+                    90
+                )
         };
     }
 
     function validateTruck() {
-        if (state.profile !== "truck") {
+        if (
+            state.profile !==
+            "truck"
+        ) {
             return null;
         }
 
-        const checks = [
-            ["navWeight", "Masa"],
-            ["navHeight", "Visina"],
-            ["navWidth", "Širina"],
-            ["navLength", "Dužina"],
+        const fields = [
+            [
+                "navWeight",
+                "Masa"
+            ],
+            [
+                "navHeight",
+                "Visina"
+            ],
+            [
+                "navWidth",
+                "Širina"
+            ],
+            [
+                "navLength",
+                "Dužina"
+            ],
             [
                 "navAxleLoad",
                 "Osovinsko opterećenje"
             ],
-            ["navAxles", "Broj osovina"],
+            [
+                "navAxles",
+                "Broj osovina"
+            ],
             [
                 "navMaxSpeed",
                 "Maksimalna brzina"
@@ -1459,13 +2042,19 @@ window.ProMap = window.ProMap || {};
         ];
 
         for (
-            const [id, label] of checks
+            const [id, label]
+            of fields
         ) {
             const value =
-                numberValue(id, NaN);
+                numberValue(
+                    id,
+                    NaN
+                );
 
             if (
-                !Number.isFinite(value) ||
+                !Number.isFinite(
+                    value
+                ) ||
                 value <= 0
             ) {
                 return `${label} mora biti veća od 0.`;
@@ -1477,7 +2066,8 @@ window.ProMap = window.ProMap || {};
 
     function requestState() {
         return {
-            start: state.start,
+            start:
+                state.start,
 
             destination:
                 state.destination,
@@ -1486,57 +2076,60 @@ window.ProMap = window.ProMap || {};
                 state.profile,
 
             avoidRestricted:
-                $("navAvoid")?.checked ??
+                $("navAvoid")
+                    ?.checked ??
                 true,
 
             departureAt:
-                new Date().toISOString(),
+                new Date()
+                    .toISOString(),
 
             truck:
-                state.profile === "truck"
+                state.profile ===
+                    "truck"
                     ? truckFromForm()
                     : null
         };
     }
 
     // ============================================================
-    // ROUTE CLEARING
+    // ROUTE STATE
     // ============================================================
 
     function clearRouteLayers() {
-        if (
-            !state.map ||
-            !state.map.isStyleLoaded()
+        for (
+            const entry
+            of state.routeLayers
         ) {
-            state.routeLayers = [];
-            state.routeCoordinates = [];
-            state.routeCumulativeDistances = [];
-            return;
+            try {
+                entry.layer.remove();
+            }
+            catch {
+                /* noop */
+            }
         }
 
-        const source = state.map.getSource("promap-routes");
-        if (source) {
-            source.setData({
-                type: "FeatureCollection",
-                features: []
-            });
-        }
+        state.routeLayers =
+            [];
 
-        state.routeLayers = [];
-        state.routeCoordinates = [];
-        state.routeCumulativeDistances = [];
+        state.routeCoordinates =
+            [];
     }
 
     function clearRouteResult() {
         clearRouteLayers();
 
-        state.routeResponse = null;
-        state.selectedRouteIndex = 0;
+        state.routeResponse =
+            null;
 
-        state.maneuvers = [];
-        state.maneuverIndex = 0;
+        state.selectedRouteIndex =
+            0;
 
-        state.routeProgressMeters = 0;
+        state.maneuvers =
+            [];
+
+        state.maneuverIndex =
+            0;
 
         setText(
             "summaryDistance",
@@ -1579,10 +2172,28 @@ window.ProMap = window.ProMap || {};
         );
 
         setText(
-            "routeSafeBadge",
-            state.profile === "truck"
-                ? "TRUCK SAFE"
-                : "CAR ROUTE"
+            "summaryEngine",
+            "—"
+        );
+
+        setText(
+            "diagnosticEngine",
+            "—"
+        );
+
+        setText(
+            "diagnosticGraph",
+            "—"
+        );
+
+        setText(
+            "diagnosticStates",
+            "—"
+        );
+
+        setText(
+            "diagnosticFallback",
+            "—"
         );
 
         setText(
@@ -1615,17 +2226,23 @@ window.ProMap = window.ProMap || {};
             "0"
         );
 
-        if ($("routeAlternatives")) {
+        if (
+            $("routeAlternatives")
+        ) {
             $("routeAlternatives")
                 .innerHTML = "";
         }
 
-        if ($("routeWarnings")) {
+        if (
+            $("routeWarnings")
+        ) {
             $("routeWarnings")
                 .innerHTML = "";
         }
 
-        if ($("maneuverList")) {
+        if (
+            $("maneuverList")
+        ) {
             $("maneuverList")
                 .innerHTML = "";
         }
@@ -1655,998 +2272,45 @@ window.ProMap = window.ProMap || {};
             true
         );
 
-        setText(
-            "diagnosticEngine",
-            "—"
-        );
-
-        setText(
-            "diagnosticGraph",
-            "—"
-        );
-
-        setText(
-            "diagnosticStates",
-            "—"
-        );
-
-        setText(
-            "diagnosticFallback",
-            "—"
-        );
-
         showError("");
     }
 
-    function selectedRoute() {
-        const routes =
-            state.routeResponse?.routes;
-
-        if (
-            !Array.isArray(routes) ||
-            routes.length === 0
-        ) {
-            return null;
-        }
-
-        return (
-            routes[
-            state.selectedRouteIndex
-            ] ||
-            routes[0]
-        );
+    function routeViolations(
+        route
+    ) {
+        return Array.isArray(
+            route?.analysis?.violations
+        )
+            ? route.analysis.violations
+            : [];
     }
 
     function updateRouteLayerStyles() {
-        if (
-            !state.map ||
-            !state.map.isStyleLoaded()
-        ) {
-            return;
-        }
-
-        const active =
-            state.map.getLayer(
-                "promap-route-active"
-            );
-
-        const alternatives =
-            state.map.getLayer(
-                "promap-route-alternatives"
-            );
-
-        if (active) {
-            state.map.setFilter(
-                "promap-route-active",
-                [
-                    "==",
-                    [
-                        "get",
-                        "routeIndex"
-                    ],
-                    state.selectedRouteIndex
-                ]
-            );
-        }
-
-        if (alternatives) {
-            state.map.setFilter(
-                "promap-route-alternatives",
-                [
-                    "!=",
-                    [
-                        "get",
-                        "routeIndex"
-                    ],
-                    state.selectedRouteIndex
-                ]
-            );
-        }
-    }
-
-
-    function routeViolations(route) {
-        if (
-            Array.isArray(
-                route?.analysis
-                    ?.violations
-            )
-        ) {
-            return route.analysis
-                .violations;
-        }
-
-        if (
-            Array.isArray(
-                state.routeResponse
-                    ?.violations
-            )
-        ) {
-            return state.routeResponse
-                .violations;
-        }
-
-        return [];
-    }
-
-    // ============================================================
-    // WARNINGS
-    // ============================================================
-
-    function renderWarnings(
-        violations
-    ) {
-        const box =
-            $("routeWarnings");
-
-        if (!box) {
-            return;
-        }
-
-        const items =
-            Array.isArray(violations)
-                ? violations
-                : [];
-
-        box.innerHTML = "";
-
         for (
-            const item of items
+            const entry
+            of state.routeLayers
         ) {
-            const row =
-                document.createElement(
-                    "div"
-                );
-
-            row.className =
-                "nav-list-item";
-
-            row.innerHTML = `
-                <span>${escapeHtml(
-                item.type ||
-                "Restriction"
-            )}</span>
-
-                <strong>${escapeHtml(
-                item.name ||
-                item.id ||
-                "Ograničenje"
-            )}</strong>
-
-                <small>${escapeHtml(
-                item.reason ||
-                "Aktivno ograničenje na izabranoj ruti."
-            )}</small>
-            `;
-
-            box.appendChild(row);
-        }
-
-        setText(
-            "warningCount",
-            String(items.length)
-        );
-
-        setHidden(
-            "warningsCard",
-            items.length === 0
-        );
-    }
-
-    // ============================================================
-    // MANEUVERS
-    // ============================================================
-
-    function maneuverIcon(
-        type,
-        modifier
-    ) {
-        const t =
-            String(
-                type || ""
-            ).toLowerCase();
-
-        const m =
-            String(
-                modifier || ""
-            ).toLowerCase();
-
-        if (t === "arrive") {
-            return "●";
-        }
-
-        if (t === "depart") {
-            return "↑";
-        }
-
-        if (
-            t === "roundabout" ||
-            t === "rotary"
-        ) {
-            return "⟳";
-        }
-
-        if (m.includes("uturn")) {
-            return "↶";
-        }
-
-        if (
-            m.includes("sharp left")
-        ) {
-            return "↙";
-        }
-
-        if (m === "left") {
-            return "↰";
-        }
-
-        if (
-            m.includes("slight left")
-        ) {
-            return "↖";
-        }
-
-        if (
-            m.includes("sharp right")
-        ) {
-            return "↘";
-        }
-
-        if (m === "right") {
-            return "↱";
-        }
-
-        if (
-            m.includes("slight right")
-        ) {
-            return "↗";
-        }
-
-        if (m === "straight") {
-            return "↑";
-        }
-
-        return "↑";
-    }
-
-    function buildManeuverInstruction(
-        type,
-        modifier,
-        roadName,
-        roundaboutExit
-    ) {
-        const t =
-            String(
-                type || "continue"
-            ).toLowerCase();
-
-        const m =
-            String(
-                modifier || ""
-            ).toLowerCase();
-
-        const road =
-            roadName
-                ? ` na ${roadName}`
-                : "";
-
-        if (t === "arrive") {
-            return "Stigli ste na odredište";
-        }
-
-        if (t === "depart") {
-            return roadName
-                ? `Krenite na ${roadName}`
-                : "Krenite pravo";
-        }
-
-        if (
-            t === "roundabout" ||
-            t === "rotary"
-        ) {
-            return roundaboutExit
-                ? `Uđite u kružni tok i izađite na ${roundaboutExit}. izlazu${road}`
-                : `Uđite u kružni tok${road}`;
-        }
-
-        if (m.includes("uturn")) {
-            return `Polukružno okretanje${road}`;
-        }
-
-        if (
-            m.includes("sharp left")
-        ) {
-            return `Oštro levo${road}`;
-        }
-
-        if (m === "left") {
-            return `Skrenite levo${road}`;
-        }
-
-        if (
-            m.includes("slight left")
-        ) {
-            return `Blago levo${road}`;
-        }
-
-        if (
-            m.includes("sharp right")
-        ) {
-            return `Oštro desno${road}`;
-        }
-
-        if (m === "right") {
-            return `Skrenite desno${road}`;
-        }
-
-        if (
-            m.includes("slight right")
-        ) {
-            return `Blago desno${road}`;
-        }
-
-        return roadName
-            ? `Nastavite pravo na ${roadName}`
-            : "Nastavite pravo";
-    }
-
-    function normalizeManeuver(item) {
-        if (!item) {
-            return null;
-        }
-
-        const type =
-            item.type ||
-            item.maneuver?.type ||
-            "continue";
-
-        const modifier =
-            item.modifier ||
-            item.maneuver?.modifier ||
-            null;
-
-        const roadName =
-            item.roadName ||
-            item.name ||
-            null;
-
-        const roundaboutExit =
-            item.roundaboutExit ??
-            item.maneuver?.exit ??
-            null;
-
-        const distanceMeters =
-            Number(
-                item.distanceMeters ??
-                item.distanceFromPreviousMeters ??
-                item.distance ??
-                0
-            );
-
-        const distanceFromRouteStartMeters =
-            Number(
-                item.distanceFromRouteStartMeters ??
-                item.routeDistanceMeters ??
-                0
-            );
-
-        const latitude =
-            Number(
-                item.latitude ??
-                item.maneuver?.latitude
-            );
-
-        const longitude =
-            Number(
-                item.longitude ??
-                item.maneuver?.longitude
-            );
-
-        const prepared = {
-            ...item,
-
-            type,
-            modifier,
-            roadName,
-            roundaboutExit,
-
-            distanceMeters:
-                Number.isFinite(
-                    distanceMeters
-                )
-                    ? distanceMeters
-                    : 0,
-
-            distanceFromRouteStartMeters:
-                Number.isFinite(
-                    distanceFromRouteStartMeters
-                )
-                    ? distanceFromRouteStartMeters
-                    : 0,
-
-            latitude:
-                Number.isFinite(
-                    latitude
-                )
-                    ? latitude
-                    : null,
-
-            longitude:
-                Number.isFinite(
-                    longitude
-                )
-                    ? longitude
-                    : null,
-
-            icon:
-                item.icon ||
-                maneuverIcon(
-                    type,
-                    modifier
-                ),
-
-            instruction:
-                item.instruction ||
-                buildManeuverInstruction(
-                    type,
-                    modifier,
-                    roadName,
-                    roundaboutExit
-                )
-        };
-
-        if (
-            window.ProMap.Maneuvers
-                ?.normalize
-        ) {
-            const normalized =
-                window.ProMap.Maneuvers
-                    .normalize(
-                        prepared
-                    );
-
-            return {
-                ...prepared,
-                ...normalized,
-
-                icon:
-                    normalized?.icon ||
-                    prepared.icon,
-
-                instruction:
-                    normalized?.instruction ||
-                    prepared.instruction
-            };
-        }
-
-        return prepared;
-    }
-
-    function extractLegManeuvers(
-        legs
-    ) {
-        const result = [];
-
-        if (!Array.isArray(legs)) {
-            return result;
-        }
-
-        let cumulativeDistance = 0;
-
-        for (
-            const leg of legs
-        ) {
-            const steps =
-                Array.isArray(
-                    leg?.steps
-                )
-                    ? leg.steps
-                    : [];
-
-            for (
-                const step of steps
-            ) {
-                const maneuver =
-                    step?.maneuver ||
-                    {};
-
-                const location =
-                    Array.isArray(
-                        maneuver.location
-                    )
-                        ? maneuver.location
-                        : Array.isArray(
-                            step?.location
-                        )
-                            ? step.location
-                            : null;
-
-                const stepDistance =
-                    Number(
-                        step?.distance
-                    );
-
-                const distanceMeters =
-                    Number.isFinite(
-                        stepDistance
-                    )
-                        ? stepDistance
-                        : 0;
-
-                const latitude =
-                    location &&
-                        Number.isFinite(
-                            Number(
-                                location[1]
-                            )
-                        )
-                        ? Number(
-                            location[1]
-                        )
-                        : null;
-
-                const longitude =
-                    location &&
-                        Number.isFinite(
-                            Number(
-                                location[0]
-                            )
-                        )
-                        ? Number(
-                            location[0]
-                        )
-                        : null;
-
-                result.push(
-                    normalizeManeuver({
-                        type:
-                            maneuver.type ||
-                            "continue",
-
-                        modifier:
-                            maneuver.modifier ||
-                            null,
-
-                        instruction:
-                            step.instruction ||
-                            null,
-
-                        distanceMeters,
-
-                        distanceFromRouteStartMeters:
-                            cumulativeDistance,
-
-                        latitude,
-                        longitude,
-
-                        roadName:
-                            step.name ||
-                            null,
-
-                        roadRef:
-                            step.ref ||
-                            null,
-
-                        roundaboutExit:
-                            maneuver.exit ??
-                            null
-                    })
-                );
-
-                cumulativeDistance +=
-                    distanceMeters;
-            }
-        }
-
-        return result.filter(Boolean);
-    }
-
-    function buildRouteCumulativeDistances() {
-        state.routeCumulativeDistances =
-            [];
-
-        if (
-            !Array.isArray(
-                state.routeCoordinates
-            ) ||
-            state.routeCoordinates
-                .length === 0
-        ) {
-            return;
-        }
-
-        state.routeCumulativeDistances =
-            new Array(
-                state.routeCoordinates
-                    .length
-            ).fill(0);
-
-        for (
-            let i = 1;
-            i <
-            state.routeCoordinates.length;
-            i++
-        ) {
-            state.routeCumulativeDistances[i] =
-                state.routeCumulativeDistances[
-                i - 1
-                ] +
-                haversineMeters(
-                    state.routeCoordinates[
-                    i - 1
-                    ][0],
-
-                    state.routeCoordinates[
-                    i - 1
-                    ][1],
-
-                    state.routeCoordinates[
-                    i
-                    ][0],
-
-                    state.routeCoordinates[
-                    i
-                    ][1]
-                );
-        }
-    }
-
-    function routeProgressFromPosition(
-        position
-    ) {
-        if (
-            !position ||
-            state.routeCoordinates
-                .length < 2
-        ) {
-            return null;
-        }
-
-        const lat =
-            Number(
-                position.latitude
-            );
-
-        const lon =
-            Number(
-                position.longitude
-            );
-
-        if (
-            !Number.isFinite(lat) ||
-            !Number.isFinite(lon)
-        ) {
-            return null;
-        }
-
-        let bestDistance =
-            Infinity;
-
-        let bestProgress = 0;
-
-        for (
-            let i = 0;
-            i <
-            state.routeCoordinates.length;
-            i++
-        ) {
-            const point =
-                state.routeCoordinates[i];
-
-            const d =
-                haversineMeters(
-                    lat,
-                    lon,
-                    point[0],
-                    point[1]
-                );
+            entry.layer.setStyle({
+                weight:
+                    entry.index ===
+                        state.selectedRouteIndex
+                        ? 7
+                        : 4,
+
+                opacity:
+                    entry.index ===
+                        state.selectedRouteIndex
+                        ? 0.95
+                        : 0.35
+            });
 
             if (
-                d < bestDistance
+                entry.index ===
+                state.selectedRouteIndex
             ) {
-                bestDistance = d;
-
-                bestProgress =
-                    state.routeCumulativeDistances[
-                    i
-                    ] ?? 0;
+                entry.layer.bringToFront();
             }
         }
-
-        state.routeProgressMeters =
-            bestProgress;
-
-        return bestProgress;
-    }
-
-    function getNextManeuver(
-        position =
-            getCurrentGpsPosition()
-    ) {
-        if (
-            !Array.isArray(
-                state.maneuvers
-            ) ||
-            state.maneuvers.length === 0
-        ) {
-            return null;
-        }
-
-        if (!position) {
-            const first =
-                state.maneuvers.find(
-                    (m) =>
-                        m.type !==
-                        "depart"
-                ) ||
-                state.maneuvers[0];
-
-            return first;
-        }
-
-        const progress =
-            routeProgressFromPosition(
-                position
-            );
-
-        if (progress == null) {
-            return (
-                state.maneuvers[
-                state.maneuverIndex
-                ] ||
-                state.maneuvers[0]
-            );
-        }
-
-        const passedTolerance = 18;
-
-        while (
-            state.maneuverIndex <
-            state.maneuvers.length - 1 &&
-            Number(
-                state.maneuvers[
-                    state.maneuverIndex
-                ]
-                    .distanceFromRouteStartMeters ||
-                0
-            ) <
-            progress -
-            passedTolerance
-        ) {
-            state.maneuverIndex++;
-        }
-
-        while (
-            state.maneuverIndex <
-            state.maneuvers.length - 1 &&
-            state.maneuvers[
-                state.maneuverIndex
-            ].type === "depart"
-        ) {
-            state.maneuverIndex++;
-        }
-
-        return (
-            state.maneuvers[
-            state.maneuverIndex
-            ] ||
-            state.maneuvers[
-            state.maneuvers.length - 1
-            ]
-        );
-    }
-
-    function updateNextInstruction(
-        position =
-            getCurrentGpsPosition()
-    ) {
-        const maneuver =
-            getNextManeuver(
-                position
-            );
-
-        if (!maneuver) {
-            setHidden(
-                "nextInstruction",
-                true
-            );
-
-            return;
-        }
-
-        let distance =
-            Number(
-                maneuver.distanceFromRouteStartMeters
-            ) -
-            Number(
-                state.routeProgressMeters ||
-                0
-            );
-
-        if (
-            !Number.isFinite(
-                distance
-            ) ||
-            distance < 0
-        ) {
-            distance =
-                distanceToManeuverMeters(
-                    position,
-                    maneuver
-                );
-        }
-
-        if (
-            !Number.isFinite(
-                distance
-            ) ||
-            distance < 0
-        ) {
-            distance =
-                Number(
-                    maneuver.distanceMeters
-                ) || 0;
-        }
-
-        setText(
-            "nextInstructionIcon",
-            maneuver.icon ||
-            maneuverIcon(
-                maneuver.type,
-                maneuver.modifier
-            )
-        );
-
-        setText(
-            "nextInstructionText",
-            maneuver.instruction ||
-            buildManeuverInstruction(
-                maneuver.type,
-                maneuver.modifier,
-                maneuver.roadName,
-                maneuver.roundaboutExit
-            )
-        );
-
-        setText(
-            "nextInstructionDistance",
-            formatDistance(
-                distance
-            )
-        );
-
-        setHidden(
-            "nextInstruction",
-            false
-        );
-    }
-
-    function renderManeuvers(
-        route
-    ) {
-        const box =
-            $("maneuverList");
-
-        if (!box) {
-            return;
-        }
-
-        let source =
-            Array.isArray(
-                state.routeResponse
-                    ?.maneuvers
-            )
-                ? state.routeResponse
-                    .maneuvers
-                : [];
-
-        let legs =
-            route?.legs;
-
-        if (
-            typeof legs === "string"
-        ) {
-            try {
-                legs =
-                    JSON.parse(legs);
-            } catch {
-                legs = null;
-            }
-        }
-
-        if (!source.length) {
-            source =
-                extractLegManeuvers(
-                    legs
-                );
-        }
-
-        const normalized =
-            source
-                .map(
-                    normalizeManeuver
-                )
-                .filter(Boolean)
-                .sort(
-                    (a, b) =>
-                        Number(
-                            a.distanceFromRouteStartMeters ||
-                            0
-                        ) -
-                        Number(
-                            b.distanceFromRouteStartMeters ||
-                            0
-                        )
-                );
-
-        state.maneuvers =
-            normalized;
-
-        state.maneuverIndex =
-            normalized.findIndex(
-                (item) =>
-                    item.type !==
-                    "depart"
-            );
-
-        if (
-            state.maneuverIndex < 0
-        ) {
-            state.maneuverIndex = 0;
-        }
-
-        state.routeProgressMeters =
-            0;
-
-        box.innerHTML = "";
-
-        for (
-            const item of normalized.slice(
-                0,
-                100
-            )
-        ) {
-            const row =
-                document.createElement(
-                    "div"
-                );
-
-            row.className =
-                "nav-list-item";
-
-            row.innerHTML = `
-                <span>${escapeHtml(
-                item.icon || "↑"
-            )}</span>
-
-                <strong>${escapeHtml(
-                item.instruction ||
-                "Nastavi pravo"
-            )}</strong>
-
-                <small>${escapeHtml(
-                formatDistance(
-                    item.distanceMeters
-                )
-            )}</small>
-            `;
-
-            box.appendChild(row);
-        }
-
-        setText(
-            "maneuverCount",
-            String(
-                normalized.length
-            )
-        );
-
-        setHidden(
-            "maneuversCard",
-            normalized.length === 0
-        );
-
-        updateNextInstruction();
     }
 
     // ============================================================
@@ -2656,157 +2320,378 @@ window.ProMap = window.ProMap || {};
     function renderAlternatives(
         routes
     ) {
+        const card =
+            $("alternativesCard");
+
         const box =
             $("routeAlternatives");
 
-        if (!box) {
+        if (
+            !card ||
+            !box
+        ) {
             return;
         }
 
-        box.innerHTML = "";
+        box.innerHTML =
+            "";
+
+        const alternatives =
+            routes
+                .map(
+                    (
+                        route,
+                        index
+                    ) => ({
+                        route,
+                        index
+                    })
+                )
+                .filter(
+                    ({ index }) =>
+                        index !==
+                        state.selectedRouteIndex
+                );
+
+        setText(
+            "alternativeCount",
+            alternatives.length
+        );
 
         if (
-            !Array.isArray(routes) ||
-            routes.length <= 1
+            !alternatives.length
         ) {
-            setText(
-                "alternativeCount",
-                "0"
+            card.hidden =
+                true;
+
+            return;
+        }
+
+        card.hidden =
+            false;
+
+        for (
+            const {
+                route,
+                index
+            }
+            of alternatives
+        ) {
+            const button =
+                document.createElement(
+                    "button"
+                );
+
+            button.type =
+                "button";
+
+            button.className =
+                "nav-alternative";
+
+            button.innerHTML = `
+                <strong>Ruta ${index + 1}</strong>
+                <span>${escapeHtml(formatDistance(route?.distance))} · ${escapeHtml(formatDuration(route?.duration))}</span>
+                <small>Score: ${escapeHtml(route?.analysis?.score ?? "—")}</small>
+            `;
+
+            button.addEventListener(
+                "click",
+                () =>
+                    selectRoute(
+                        index,
+                        true
+                    )
             );
 
+            box.appendChild(
+                button
+            );
+        }
+    }
+
+    // ============================================================
+    // WARNINGS
+    // ============================================================
+
+    function renderWarnings(
+        route,
+        response
+    ) {
+        const card =
+            $("warningsCard");
+
+        const box =
+            $("routeWarnings");
+
+        if (
+            !card ||
+            !box
+        ) {
+            return;
+        }
+
+        box.innerHTML =
+            "";
+
+        const violations = [
+            ...routeViolations(
+                route
+            ),
+
+            ...(
+                Array.isArray(
+                    response?.violations
+                )
+                    ? response.violations
+                    : []
+            )
+        ];
+
+        const unique = [];
+        const seen = new Set();
+
+        for (
+            const item
+            of violations
+        ) {
+            const key =
+                `${item?.id || ""}|${item?.name || ""}|${item?.reason || ""}`;
+
+            if (
+                seen.has(
+                    key
+                )
+            ) {
+                continue;
+            }
+
+            seen.add(
+                key
+            );
+
+            unique.push(
+                item
+            );
+        }
+
+        setText(
+            "warningCount",
+            unique.length
+        );
+
+        if (
+            !unique.length
+        ) {
+            card.hidden =
+                true;
+
+            return;
+        }
+
+        card.hidden =
+            false;
+
+        unique.forEach(
+            (item) => {
+                const row =
+                    document.createElement(
+                        "div"
+                    );
+
+                row.className =
+                    "nav-warning";
+
+                row.innerHTML = `
+                    <strong>${escapeHtml(item?.name || item?.type || "Restrikcija")}</strong>
+                    <span>${escapeHtml(item?.reason || "Ruta sadrži upozorenje.")}</span>
+                `;
+
+                box.appendChild(
+                    row
+                );
+            }
+        );
+    }
+
+    // ============================================================
+    // MANEUVERS
+    // ============================================================
+
+    function renderManeuvers(
+        response
+    ) {
+        const card =
+            $("maneuversCard");
+
+        const box =
+            $("maneuverList");
+
+        if (
+            !card ||
+            !box
+        ) {
+            return;
+        }
+
+        const source =
+            Array.isArray(
+                response?.maneuvers
+            )
+                ? response.maneuvers
+                : [];
+
+        state.maneuvers =
+            source.map(
+                (item) =>
+                    window.ProMap.Maneuvers
+                        ?.normalize
+                        ? window.ProMap.Maneuvers
+                            .normalize(
+                                item
+                            )
+                        : item
+            );
+
+        box.innerHTML =
+            "";
+
+        setText(
+            "maneuverCount",
+            state.maneuvers.length
+        );
+
+        if (
+            !state.maneuvers.length
+        ) {
+            card.hidden =
+                true;
+
+            return;
+        }
+
+        card.hidden =
+            false;
+
+        state.maneuvers.forEach(
+            (
+                maneuver,
+                index
+            ) => {
+                const row =
+                    document.createElement(
+                        "button"
+                    );
+
+                row.type =
+                    "button";
+
+                row.className =
+                    "nav-maneuver";
+
+                row.innerHTML = `
+                    <span class="nav-maneuver-icon">${escapeHtml(maneuver.icon || "↑")}</span>
+                    <span>
+                        <strong>${escapeHtml(maneuver.instruction || "Nastavi pravo")}</strong>
+                        <small>${escapeHtml(formatDistance(maneuver.distanceMeters))}</small>
+                    </span>
+                `;
+
+                row.addEventListener(
+                    "click",
+                    () => {
+                        const lat =
+                            Number(
+                                maneuver.latitude
+                            );
+
+                        const lon =
+                            Number(
+                                maneuver.longitude
+                            );
+
+                        if (
+                            state.map &&
+                            Number.isFinite(
+                                lat
+                            ) &&
+                            Number.isFinite(
+                                lon
+                            )
+                        ) {
+                            state.map.setView(
+                                [
+                                    lat,
+                                    lon
+                                ],
+                                Math.max(
+                                    state.map.getZoom(),
+                                    16
+                                )
+                            );
+                        }
+
+                        state.maneuverIndex =
+                            index;
+
+                        updateNextInstruction();
+                    }
+                );
+
+                box.appendChild(
+                    row
+                );
+            }
+        );
+    }
+
+    function updateNextInstruction() {
+        if (
+            !state.maneuvers.length
+        ) {
             setHidden(
-                "alternativesCard",
+                "nextInstruction",
                 true
             );
 
             return;
         }
 
-        routes.forEach(
-            (route, index) => {
-                const button =
-                    document.createElement(
-                        "button"
-                    );
+        const index =
+            Math.min(
+                Math.max(
+                    state.maneuverIndex,
+                    0
+                ),
+                state.maneuvers.length -
+                1
+            );
 
-                button.type = "button";
-
-                button.className =
-                    "nav-list-item";
-
-                const restricted =
-                    Boolean(
-                        route?.analysis
-                            ?.restricted
-                    );
-
-                button.innerHTML = `
-                    <span>
-                        Ruta ${index + 1}${index ===
-                        state.selectedRouteIndex
-                        ? " · izabrana"
-                        : ""
-                    }
-                    </span>
-
-                    <strong>
-                        ${escapeHtml(
-                        formatDistance(
-                            route.distance
-                        )
-                    )}
-                    </strong>
-
-                    <small>
-                        ${escapeHtml(
-                        formatDuration(
-                            route.duration
-                        )
-                    )}${restricted
-                        ? " · restrikcija"
-                        : ""
-                    }
-                    </small>
-                `;
-
-                button.addEventListener(
-                    "click",
-                    () => {
-                        selectRoute(
-                            index,
-                            true
-                        );
-                    }
-                );
-
-                box.appendChild(
-                    button
-                );
-            }
-        );
-
-        setText(
-            "alternativeCount",
-            String(routes.length)
-        );
+        const maneuver =
+            state.maneuvers[
+            index
+            ];
 
         setHidden(
-            "alternativesCard",
+            "nextInstruction",
             false
         );
-    }
-
-    // ============================================================
-    // DIAGNOSTICS
-    // ============================================================
-
-    function updateDiagnostics() {
-        const diagnostics =
-            state.routeResponse
-                ?.diagnostics ||
-            {};
 
         setText(
-            "diagnosticEngine",
-            diagnostics.engine ||
-            "—"
+            "nextInstructionIcon",
+            maneuver.icon ||
+            "↑"
         );
 
         setText(
-            "diagnosticGraph",
-            diagnostics.graphVersion != null
-                ? String(
-                    diagnostics.graphVersion
-                )
-                : "—"
+            "nextInstructionText",
+            maneuver.instruction ||
+            "Nastavi pravo"
         );
 
         setText(
-            "diagnosticStates",
-            Number.isFinite(
-                Number(
-                    diagnostics.expandedStates
-                )
-            )
-                ? String(
-                    diagnostics.expandedStates
-                )
-                : "—"
-        );
-
-        setText(
-            "diagnosticFallback",
-            diagnostics.usedFallback
-                ? "DA"
-                : "NE"
-        );
-
-        setEngine(
-            diagnostics.engine ||
-            "PostGIS",
-
-            Boolean(
-                diagnostics.usedFallback
+            "nextInstructionDistance",
+            formatDistance(
+                maneuver.distanceMeters
             )
         );
     }
@@ -2818,172 +2703,191 @@ window.ProMap = window.ProMap || {};
             return;
         }
 
-        const response =
-            state.routeResponse ||
-            {};
-
-        const summary =
-            response.summary ||
-            {};
-
-        const violations =
-            routeViolations(route);
-
-        const restricted =
-            Boolean(
-                route?.analysis
-                    ?.restricted
-            ) ||
-            violations.length > 0;
-
-        const safe =
-            state.profile !==
-            "truck" ||
-            !restricted;
-
         const distance =
-            Number(
-                route.distance ??
-                summary.distanceMeters
-            );
+            route.distance ??
+            route.Distance ??
+            route?.summary
+                ?.distanceMeters;
 
         const duration =
-            Number(
-                route.duration ??
-                summary.durationSeconds
-            );
+            route.duration ??
+            route.Duration ??
+            route?.summary
+                ?.durationSeconds;
 
-        const eta =
-            summary.estimatedArrival ||
-            new Date(
-                Date.now() +
-                Math.max(
-                    0,
-                    duration || 0
-                ) * 1000
-            ).toISOString();
+        const summary =
+            state.routeResponse
+                ?.summary ||
+            {};
 
         setText(
             "summaryDistance",
-            formatDistance(distance)
+            formatDistance(
+                distance ??
+                summary.distanceMeters
+            )
         );
 
         setText(
             "summaryDuration",
-            formatDuration(duration)
+            formatDuration(
+                duration ??
+                summary.durationSeconds
+            )
         );
 
         setText(
             "summaryEta",
             formatEta(
-                eta,
-                duration
+                summary.estimatedArrival,
+                duration ??
+                summary.durationSeconds
             )
         );
 
         setText(
-            "summarySafety",
-            safe
-                ? "SAFE"
-                : "RESTRIKCIJA"
-        );
-
-        setText(
             "mapDistance",
-            formatDistance(distance)
+            formatDistance(
+                distance
+            )
         );
 
         setText(
             "mapDuration",
-            formatDuration(duration)
+            formatDuration(
+                duration
+            )
         );
 
         setText(
             "mapEta",
             formatEta(
-                eta,
+                summary.estimatedArrival,
                 duration
             )
         );
 
+        const safe =
+            state.routeResponse
+                ?.isTruckSafe ??
+            !routeViolations(
+                route
+            ).length;
+
         setText(
-            "summaryDiagnostics",
-            violations.length > 0
-                ? `${violations.length} ograničenja`
-                : "Bez aktivnih restrikcija"
+            "summarySafety",
+            state.profile ===
+                "truck"
+                ? safe
+                    ? "TRUCK SAFE"
+                    : "UPOZORENJE"
+                : "READY"
         );
 
         setText(
             "routeSafeBadge",
-            state.profile === "truck"
+            state.profile ===
+                "truck"
                 ? safe
                     ? "TRUCK SAFE"
-                    : "TRUCK WARNING"
+                    : "RESTRIKCIJE"
                 : "CAR ROUTE"
         );
 
-        const routeStatus =
-            $("mapRouteStatus");
+        const diagnostics =
+            state.routeResponse
+                ?.diagnostics ||
+            {};
 
-        if (routeStatus) {
-            routeStatus.textContent =
-                safe
-                    ? "Bezbedna"
-                    : "Upozorenje";
+        const parts = [];
 
-            routeStatus.classList.toggle(
-                "pm-badge-success",
-                safe
-            );
-
-            routeStatus.classList.toggle(
-                "pm-badge-danger",
-                !safe
+        if (
+            Number.isFinite(
+                Number(
+                    diagnostics.expandedStates
+                )
+            )
+        ) {
+            parts.push(
+                `${diagnostics.expandedStates} states`
             );
         }
 
-        const startLabel =
-            $("navStart")
-                ?.value
-                ?.trim() ||
-            "Start";
+        if (
+            diagnostics.graphVersion !=
+            null
+        ) {
+            parts.push(
+                `graph ${diagnostics.graphVersion}`
+            );
+        }
 
-        const endLabel =
-            $("navEnd")
-                ?.value
-                ?.trim() ||
-            "Odredište";
+        if (
+            routeViolations(
+                route
+            ).length
+        ) {
+            parts.push(
+                `${routeViolations(route).length} warnings`
+            );
+        }
 
         setText(
-            "mapRouteTitle",
-            `${startLabel} → ${endLabel}`
+            "summaryDiagnostics",
+            parts.length
+                ? parts.join(
+                    " · "
+                )
+                : "—"
         );
 
-        setHidden(
-            "mapRouteCard",
-            false
+        setText(
+            "diagnosticGraph",
+            diagnostics.graphVersion !=
+                null
+                ? String(
+                    diagnostics.graphVersion
+                )
+                : "—"
+        );
+
+        setText(
+            "diagnosticStates",
+            diagnostics.expandedStates !=
+                null
+                ? String(
+                    diagnostics.expandedStates
+                )
+                : "—"
+        );
+
+        setEngine(
+            diagnostics.engine,
+            Boolean(
+                diagnostics.usedFallback
+            )
         );
 
         renderWarnings(
-            violations
+            route,
+            state.routeResponse
         );
 
-        renderManeuvers(
-            route
-        );
-
-        updateDiagnostics();
+        updateNextInstruction();
     }
 
     function selectRoute(
         index,
-        fit = false
+        fit
     ) {
         const routes =
-            state.routeResponse?.routes;
+            state.routeResponse
+                ?.routes;
 
         if (
-            !Array.isArray(routes) ||
+            !Array.isArray(
+                routes
+            ) ||
             !routes[index]
         ) {
             return;
@@ -3000,10 +2904,6 @@ window.ProMap = window.ProMap || {};
                 route.geometry
             );
 
-        buildRouteCumulativeDistances();
-
-        ensureRouteLayers();
-
         updateRouteLayerStyles();
 
         updateSelectedRouteUi(
@@ -3016,47 +2916,22 @@ window.ProMap = window.ProMap || {};
 
         if (
             fit &&
-            state.routeCoordinates.length > 0 &&
-            state.map
+            state.routeCoordinates
+                .length
         ) {
-            const bounds =
-                new maplibregl.LngLatBounds();
-
-            for (
-                const [lat, lng]
-                of state.routeCoordinates
-            ) {
-                bounds.extend([
-                    lng,
-                    lat
-                ]);
-            }
-
-            state.map.fitBounds(
-                bounds,
-                {
-                    padding: {
-                        top: 110,
-                        bottom: 100,
-                        left: 80,
-                        right: 80
-                    },
-
-                    maxZoom: 15,
-
-                    duration: 800
-                }
-            );
+            fitRoute();
         }
     }
 
     // ============================================================
-    // ROUTING
+    // ROUTE RENDERING
     // ============================================================
 
     function renderRouteResponse(
         response
     ) {
+        clearRouteLayers();
+
         if (
             !response ||
             !Array.isArray(
@@ -3069,34 +2944,13 @@ window.ProMap = window.ProMap || {};
             );
         }
 
-        if (
-            !state.map
-        ) {
-            throw new Error(
-                "Navigation mapa nije inicijalizovana."
-            );
-        }
-
-        if (
-            !state.map.isStyleLoaded()
-        ) {
-            throw new Error(
-                "TomTom mapa još nije učitana."
-            );
-        }
-
-        ensureRouteLayers();
-
         state.routeResponse =
             response;
 
-        state.maneuverIndex = 0;
-
-        state.routeProgressMeters = 0;
-
         const requestedIndex =
             Number(
-                response.selectedRouteIndex ?? 0
+                response.selectedRouteIndex ??
+                0
             );
 
         state.selectedRouteIndex =
@@ -3109,97 +2963,73 @@ window.ProMap = window.ProMap || {};
                 ? requestedIndex
                 : 0;
 
-        /*
-         * ============================================================
-         * GEOJSON ZA MAPLIBRE
-         * ============================================================
-         */
+        for (
+            const [
+                index,
+                route
+            ]
+            of response.routes.entries()
+        ) {
+            const coordinates =
+                geometryToLatLngs(
+                    route.geometry
+                );
 
-        const features =
-            response.routes
-                .map(
-                    (route, index) => {
-                        let geometry =
-                            route.geometry;
+            if (
+                !coordinates.length
+            ) {
+                continue;
+            }
 
-                        if (
-                            typeof geometry ===
-                            "string"
-                        ) {
-                            try {
-                                geometry =
-                                    JSON.parse(
-                                        geometry
-                                    );
-                            } catch {
-                                return null;
-                            }
-                        }
+            const layer =
+                L.polyline(
+                    coordinates,
+                    {
+                        weight:
+                            index ===
+                                state.selectedRouteIndex
+                                ? 7
+                                : 4,
 
-                        if (
-                            geometry?.type ===
-                            "Feature"
-                        ) {
-                            geometry =
-                                geometry.geometry;
-                        }
+                        opacity:
+                            index ===
+                                state.selectedRouteIndex
+                                ? 0.95
+                                : 0.35,
 
-                        if (
-                            !geometry ||
-                            !Array.isArray(
-                                geometry.coordinates
-                            )
-                        ) {
-                            return null;
-                        }
-
-                        return {
-                            type:
-                                "Feature",
-
-                            properties: {
-                                routeIndex:
-                                    index
-                            },
-
-                            geometry
-                        };
+                        className:
+                            index ===
+                                state.selectedRouteIndex
+                                ? "pm-route-active"
+                                : "pm-route-alternative"
                     }
-                )
-                .filter(Boolean);
+                ).addTo(
+                    state.map
+                );
 
-        const source =
-            state.map.getSource(
-                "promap-routes"
+            layer.on(
+                "click",
+                () =>
+                    selectRoute(
+                        index,
+                        false
+                    )
             );
 
-        if (!source) {
-            ensureRouteLayers();
+            state.routeLayers.push({
+                index,
+                layer
+            });
         }
 
-        const routeSource =
-            state.map.getSource(
-                "promap-routes"
-            );
+        renderManeuvers(
+            response
+        );
 
-        if (!routeSource) {
-            throw new Error(
-                "MapLibre route source nije kreiran."
-            );
-        }
-
-        routeSource.setData({
-            type:
-                "FeatureCollection",
-
-            features
-        });
-
-        /*
-         * ============================================================
-         * SELECTED ROUTE
-         * ============================================================
-         */
+        setHidden(
+            "mapRouteCard",
+            false
+        );
 
         selectRoute(
             state.selectedRouteIndex,
@@ -3207,33 +3037,51 @@ window.ProMap = window.ProMap || {};
         );
     }
 
+    // ============================================================
+    // ROUTING
+    // ============================================================
 
     async function calculateRoute({
         silent = false
     } = {}) {
-        if (state.routing) {
-            return;
+        if (
+            state.routing
+        ) {
+            return false;
         }
 
         showError("");
 
-        try {
-            if (!state.start) {
+        if (
+            !state.start
+        ) {
+            try {
                 await resolveInput(
                     "start"
                 );
             }
+            catch (error) {
+                console.warn(
+                    "[ProMap Navigation] Start resolve failed:",
+                    error
+                );
+            }
+        }
 
-            if (!state.destination) {
+        if (
+            !state.destination
+        ) {
+            try {
                 await resolveInput(
                     "end"
                 );
             }
-        } catch (error) {
-            console.warn(
-                "Point resolve error:",
-                error
-            );
+            catch (error) {
+                console.warn(
+                    "[ProMap Navigation] Destination resolve failed:",
+                    error
+                );
+            }
         }
 
         if (
@@ -3244,18 +3092,20 @@ window.ProMap = window.ProMap || {};
                 "Izaberi validan start i odredište iz predloga, unesi koordinate ili izaberi tačke na mapi."
             );
 
-            return;
+            return false;
         }
 
         const truckError =
             validateTruck();
 
-        if (truckError) {
+        if (
+            truckError
+        ) {
             showError(
                 truckError
             );
 
-            return;
+            return false;
         }
 
         const directDistance =
@@ -3273,7 +3123,7 @@ window.ProMap = window.ProMap || {};
                 "Start i odredište su preblizu."
             );
 
-            return;
+            return false;
         }
 
         if (
@@ -3284,10 +3134,12 @@ window.ProMap = window.ProMap || {};
                 "Routing JS modul nije učitan."
             );
 
-            return;
+            return false;
         }
 
-        setRoutingUi(true);
+        setRoutingUi(
+            true
+        );
 
         try {
             const response =
@@ -3299,12 +3151,24 @@ window.ProMap = window.ProMap || {};
                 response
             );
 
-            if (!silent) {
+            setText(
+                "navStatus",
+                "READY"
+            );
+
+            if (
+                !silent
+            ) {
                 showError("");
             }
-        } catch (error) {
+
+            return true;
+        }
+        catch (
+        error
+        ) {
             console.error(
-                "Navigation routing error:",
+                "[ProMap Navigation] Routing error:",
                 error
             );
 
@@ -3313,19 +3177,8 @@ window.ProMap = window.ProMap || {};
                 "Routing servis trenutno nije dostupan.";
 
             if (
-                error?.code ===
-                "InvalidStart"
-            ) {
-                message =
-                    "Start nema validne geografske koordinate.";
-            } else if (
-                error?.code ===
-                "InvalidDestination"
-            ) {
-                message =
-                    "Odredište nema validne geografske koordinate.";
-            } else if (
-                error?.status === 503
+                error?.status ===
+                503
             ) {
                 message =
                     "Routing servis trenutno nije dostupan. Proveri PostGIS graph i OSRM fallback.";
@@ -3338,7 +3191,9 @@ window.ProMap = window.ProMap || {};
             const badge =
                 $("engineBadge");
 
-            if (badge) {
+            if (
+                badge
+            ) {
                 badge.classList.remove(
                     "ready"
                 );
@@ -3347,16 +3202,23 @@ window.ProMap = window.ProMap || {};
                     "error"
                 );
             }
-        } finally {
-            setRoutingUi(false);
+
+            return false;
+        }
+        finally {
+            setRoutingUi(
+                false
+            );
         }
     }
 
     // ============================================================
-    // TRUCK PRESET
+    // VEHICLE
     // ============================================================
 
-    function applyPreset(value) {
+    function applyPreset(
+        value
+    ) {
         const preset =
             PRESETS[value];
 
@@ -3390,84 +3252,23 @@ window.ProMap = window.ProMap || {};
         for (
             const [
                 id,
-                valueToSet
-            ] of Object.entries(values)
+                value
+            ]
+            of Object.entries(
+                values
+            )
         ) {
             const element =
                 $(id);
 
-            if (element) {
+            if (
+                element
+            ) {
                 element.value =
                     String(
-                        valueToSet
+                        value
                     );
             }
-        }
-    }
-
-    // ============================================================
-    // VEHICLE MODE
-    // ============================================================
-
-    function updateVehicleMode() {
-        const truck =
-            state.profile === "truck";
-
-        $("truckMode")
-            ?.classList.toggle(
-                "active",
-                truck
-            );
-
-        $("carMode")
-            ?.classList.toggle(
-                "active",
-                !truck
-            );
-
-        setHidden(
-            "truckFields",
-            !truck
-        );
-
-        const preset =
-            $("truckPreset");
-
-        if (preset) {
-            preset.disabled =
-                !truck;
-        }
-
-        setText(
-            "truckModeBadge",
-            truck
-                ? "HGV"
-                : "CAR"
-        );
-
-        setText(
-            "routeSafeBadge",
-            truck
-                ? "TRUCK SAFE"
-                : "CAR ROUTE"
-        );
-
-        const calculate =
-            $("calcRoute");
-
-        const strong =
-            calculate?.querySelector(
-                "strong"
-            );
-
-        if (
-            strong &&
-            !state.routing
-        ) {
-            strong.textContent =
-                truck
-                    ? "Izračunaj truck rutu"
-                    : "Izračunaj auto rutu";
         }
     }
 
@@ -3479,16 +3280,66 @@ window.ProMap = window.ProMap || {};
                 ? "car"
                 : "truck";
 
-        updateVehicleMode();
+        $("truckMode")
+            ?.classList.toggle(
+                "active",
+                state.profile ===
+                "truck"
+            );
 
-        if (state.routeResponse) {
-            clearRouteResult();
-        }
+        $("carMode")
+            ?.classList.toggle(
+                "active",
+                state.profile ===
+                "car"
+            );
+
+        setText(
+            "truckModeBadge",
+            state.profile ===
+                "truck"
+                ? "HGV"
+                : "CAR"
+        );
+
+        setText(
+            "routeSafeBadge",
+            state.profile ===
+                "truck"
+                ? "TRUCK SAFE"
+                : "CAR ROUTE"
+        );
+
+        setHidden(
+            "truckFields",
+            state.profile !==
+            "truck"
+        );
+
+        clearRouteResult();
+
+        updateVehicleMode();
     }
 
-    // ============================================================
-    // SWAP
-    // ============================================================
+    function updateVehicleMode() {
+        const button =
+            $("calcRoute");
+
+        const strong =
+            button?.querySelector(
+                "strong"
+            );
+
+        if (
+            strong
+        ) {
+            strong.textContent =
+                state.profile ===
+                    "truck"
+                    ? "Izračunaj truck rutu"
+                    : "Izračunaj auto rutu";
+        }
+    }
 
     function swapPoints() {
         const oldStart =
@@ -3497,39 +3348,36 @@ window.ProMap = window.ProMap || {};
         const oldDestination =
             state.destination;
 
-        const startInput =
-            $("navStart");
-
-        const endInput =
-            $("navEnd");
-
         if (
-            startInput &&
-            endInput
+            oldStart
         ) {
-            const startValue =
-                startInput.value;
-
-            startInput.value =
-                endInput.value;
-
-            endInput.value =
-                startValue;
-        }
-
-        state.start = null;
-        state.destination = null;
-
-        if (oldDestination) {
-            setStart(
-                oldDestination
-            );
-        }
-
-        if (oldStart) {
             setDestination(
                 oldStart
             );
+
+            if (
+                $("navEnd")
+            ) {
+                $("navEnd").value =
+                    oldStart.label ||
+                    `${oldStart.latitude.toFixed(6)}, ${oldStart.longitude.toFixed(6)}`;
+            }
+        }
+
+        if (
+            oldDestination
+        ) {
+            setStart(
+                oldDestination
+            );
+
+            if (
+                $("navStart")
+            ) {
+                $("navStart").value =
+                    oldDestination.label ||
+                    `${oldDestination.latitude.toFixed(6)}, ${oldDestination.longitude.toFixed(6)}`;
+            }
         }
 
         clearRouteResult();
@@ -3542,12 +3390,17 @@ window.ProMap = window.ProMap || {};
     function activateMapPick(
         target
     ) {
-        if (!state.map) {
+        if (
+            !state.map
+        ) {
             return;
         }
 
         state.picking =
-            target;
+            target ===
+                "end"
+                ? "destination"
+                : target;
 
         state.map
             .getContainer()
@@ -3555,7 +3408,8 @@ window.ProMap = window.ProMap || {};
             "crosshair";
 
         showError(
-            target === "start"
+            state.picking ===
+                "start"
                 ? "Klikni na mapu da izabereš polaznu tačku."
                 : "Klikni na mapu da izabereš odredište."
         );
@@ -3566,69 +3420,62 @@ window.ProMap = window.ProMap || {};
     // ============================================================
 
     function fitRoute() {
-        if (!state.map) {
+        if (
+            !state.map
+        ) {
             return;
         }
 
-        const bounds =
-            new maplibregl.LngLatBounds();
+        const points =
+            state.routeCoordinates.length
+                ? state.routeCoordinates
+                : [
+                    state.start
+                        ? [
+                            state.start.latitude,
+                            state.start.longitude
+                        ]
+                        : null,
+
+                    state.destination
+                        ? [
+                            state.destination.latitude,
+                            state.destination.longitude
+                        ]
+                        : null
+                ].filter(
+                    Boolean
+                );
 
         if (
-            state.routeCoordinates.length > 0
+            !points.length
         ) {
-            for (
-                const [lat, lng]
-                of state.routeCoordinates
-            ) {
-                bounds.extend([
-                    lng,
-                    lat
-                ]);
-            }
-
-            state.map.fitBounds(
-                bounds,
-                {
-                    padding: {
-                        top: 110,
-                        bottom: 100,
-                        left: 80,
-                        right: 80
-                    },
-
-                    maxZoom: 15,
-
-                    duration: 700
-                }
-            );
-
             return;
         }
 
-        if (state.start) {
-            bounds.extend([
-                state.start.longitude,
-                state.start.latitude
-            ]);
-        }
+        state.map.fitBounds(
+            L.latLngBounds(
+                points
+            ),
+            {
+                padding: [
+                    30,
+                    30
+                ],
 
-        if (state.destination) {
-            bounds.extend([
-                state.destination.longitude,
-                state.destination.latitude
-            ]);
-        }
+                maxZoom:
+                    state.routeCoordinates
+                        .length
+                        ? undefined
+                        : 14
+            }
+        );
 
-        if (!bounds.isEmpty()) {
-            state.map.fitBounds(
-                bounds,
-                {
-                    padding: 70,
-                    maxZoom: 14,
-                    duration: 600
-                }
-            );
-        }
+        setTimeout(
+            () =>
+                syncTomTomBackground(),
+            50
+        );
     }
 
     // ============================================================
@@ -3660,10 +3507,12 @@ window.ProMap = window.ProMap || {};
             ],
             Math.max(
                 17,
-                state.map.getZoom() || 17
+                state.map.getZoom() ||
+                17
             ),
             {
-                animate: true
+                animate:
+                    true
             }
         );
     }
@@ -3671,22 +3520,22 @@ window.ProMap = window.ProMap || {};
     function updateGpsMarker(
         position
     ) {
-        if (!state.map) {
+        if (
+            !state.map
+        ) {
             return;
         }
 
         const latitude =
             Number(
                 position?.latitude ??
-                position?.coords
-                    ?.latitude
+                position?.coords?.latitude
             );
 
         const longitude =
             Number(
                 position?.longitude ??
-                position?.coords
-                    ?.longitude
+                position?.coords?.longitude
             );
 
         if (
@@ -3700,12 +3549,9 @@ window.ProMap = window.ProMap || {};
             return;
         }
 
-        const hadGpsMarker =
-            Boolean(
-                state.gpsMarker
-            );
-
-        if (!state.gpsMarker) {
+        if (
+            !state.gpsMarker
+        ) {
             state.gpsMarker =
                 L.circleMarker(
                     [
@@ -3713,17 +3559,20 @@ window.ProMap = window.ProMap || {};
                         longitude
                     ],
                     {
-                        radius: 8,
-                        weight: 3
+                        radius:
+                            8,
+
+                        weight:
+                            3,
+
+                        fillOpacity:
+                            0.9
                     }
-                )
-                    .addTo(
-                        state.map
-                    )
-                    .bindPopup(
-                        "Trenutna GPS pozicija"
-                    );
-        } else {
+                ).addTo(
+                    state.map
+                );
+        }
+        else {
             state.gpsMarker.setLatLng(
                 [
                     latitude,
@@ -3732,38 +3581,17 @@ window.ProMap = window.ProMap || {};
             );
         }
 
-        const rawSpeed =
+        const speed =
             Number(
                 position?.speed ??
-                position?.coords
-                    ?.speed
-            );
-
-        const speedKmh =
-            Number.isFinite(
-                rawSpeed
-            ) &&
-                rawSpeed >= 0
-                ? Math.round(
-                    rawSpeed * 3.6
-                )
-                : null;
-
-        const rawAccuracy =
-            Number(
-                position?.accuracy ??
-                position?.coords
-                    ?.accuracy
+                position?.coords?.speed
             );
 
         const accuracy =
-            Number.isFinite(
-                rawAccuracy
-            )
-                ? Math.round(
-                    rawAccuracy
-                )
-                : null;
+            Number(
+                position?.accuracy ??
+                position?.coords?.accuracy
+            );
 
         setGpsStatus(
             "ON",
@@ -3777,15 +3605,23 @@ window.ProMap = window.ProMap || {};
 
         setText(
             "liveSpeed",
-            speedKmh != null
-                ? `${speedKmh} km/h`
+            Number.isFinite(
+                speed
+            )
+                ? `${Math.round(
+                    speed * 3.6
+                )} km/h`
                 : "—"
         );
 
         setText(
             "liveAccuracy",
-            accuracy != null
-                ? `±${accuracy} m`
+            Number.isFinite(
+                accuracy
+            )
+                ? `±${Math.round(
+                    accuracy
+                )} m`
                 : "—"
         );
 
@@ -3800,100 +3636,34 @@ window.ProMap = window.ProMap || {};
                 longitude
             );
 
-        if (offRoute == null) {
-            setText(
-                "liveOffRoute",
-                "—"
-            );
-        } else {
-            setText(
-                "liveOffRoute",
-                offRoute > 60
+        setText(
+            "liveOffRoute",
+            offRoute == null
+                ? "—"
+                : offRoute > 100
                     ? `DA · ${Math.round(
                         offRoute
                     )} m`
                     : "NE"
-            );
-        }
-
-        updateNextInstruction({
-            latitude,
-            longitude,
-            accuracy,
-            speed: rawSpeed,
-            heading: Number(
-                position?.heading ??
-                position?.coords
-                    ?.heading
-            ),
-            timestamp:
-                position?.timestamp ??
-                position?.coords
-                    ?.timestamp
-        });
+        );
 
         if (
             state.live &&
             state.liveFollow
         ) {
-            const speed =
-                rawSpeed;
+            state.map.panTo(
+                [
+                    latitude,
+                    longitude
+                ],
+                {
+                    animate:
+                        true,
 
-            let targetZoom = 17;
-
-            if (
-                Number.isFinite(
-                    speed
-                )
-            ) {
-                if (
-                    speed > 22
-                ) {
-                    targetZoom = 16;
+                    duration:
+                        0.3
                 }
-
-                if (
-                    speed > 30
-                ) {
-                    targetZoom = 15.5;
-                }
-            }
-
-            if (!hadGpsMarker) {
-                state.map.setView(
-                    [
-                        latitude,
-                        longitude
-                    ],
-                    targetZoom,
-                    {
-                        animate: true
-                    }
-                );
-            } else {
-                if (
-                    state.map.getZoom() <
-                    15
-                ) {
-                    state.map.setZoom(
-                        targetZoom,
-                        {
-                            animate: true
-                        }
-                    );
-                }
-
-                state.map.panTo(
-                    [
-                        latitude,
-                        longitude
-                    ],
-                    {
-                        animate: true,
-                        duration: 0.35
-                    }
-                );
-            }
+            );
         }
 
         if (
@@ -3915,7 +3685,9 @@ window.ProMap = window.ProMap || {};
                     "Trenutna GPS lokacija"
             };
 
-            if ($("navStart")) {
+            if (
+                $("navStart")
+            ) {
                 $("navStart").value =
                     `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
             }
@@ -3926,7 +3698,8 @@ window.ProMap = window.ProMap || {};
             );
 
             calculateRoute({
-                silent: true
+                silent:
+                    true
             });
         }
     }
@@ -3934,7 +3707,9 @@ window.ProMap = window.ProMap || {};
     function gpsErrorMessage(
         error
     ) {
-        switch (error?.code) {
+        switch (
+        error?.code
+        ) {
             case 1:
                 return "GPS dozvola je odbijena.";
 
@@ -3961,21 +3736,16 @@ window.ProMap = window.ProMap || {};
             return;
         }
 
-        if (!state.routeResponse) {
-            showError("");
-
-            try {
+        if (
+            !state.routeResponse
+        ) {
+            const ok =
                 await calculateRoute();
-            } catch (error) {
-                console.error(
-                    "Live navigation route preparation error:",
-                    error
-                );
 
-                return;
-            }
-
-            if (!state.routeResponse) {
+            if (
+                !ok ||
+                !state.routeResponse
+            ) {
                 showError(
                     "Ruta nije izračunata. Prvo izračunaj rutu."
                 );
@@ -3986,46 +3756,14 @@ window.ProMap = window.ProMap || {};
 
         window.ProMap.Gps.stop();
 
-        state.live = true;
-        state.liveFollow = true;
+        state.live =
+            true;
 
-        state.maneuverIndex = 0;
-        state.routeProgressMeters = 0;
-        state.lastRerouteAt = 0;
+        state.liveFollow =
+            true;
 
-        if (state.map) {
-            const position =
-                getCurrentGpsPosition();
-
-            if (position) {
-                state.map.setView(
-                    [
-                        position.latitude,
-                        position.longitude
-                    ],
-                    17,
-                    {
-                        animate: true
-                    }
-                );
-            } else if (
-                state.routeCoordinates
-                    .length
-            ) {
-                state.map.fitBounds(
-                    L.latLngBounds(
-                        state.routeCoordinates
-                    ),
-                    {
-                        padding: [
-                            50,
-                            50
-                        ],
-                        maxZoom: 15
-                    }
-                );
-            }
-        }
+        state.lastRerouteAt =
+            0;
 
         setHidden(
             "startLiveNavigation",
@@ -4058,16 +3796,14 @@ window.ProMap = window.ProMap || {};
                 15000,
 
             onPosition:
-                (position) => {
-                    updateGpsMarker(
-                        position
-                    );
-                },
+                updateGpsMarker,
 
             onError:
-                (error) => {
+                (
+                    error
+                ) => {
                     console.warn(
-                        "GPS error:",
+                        "[ProMap Navigation] GPS error:",
                         error
                     );
 
@@ -4094,8 +3830,11 @@ window.ProMap = window.ProMap || {};
         window.ProMap.Gps
             ?.stop?.();
 
-        state.live = false;
-        state.liveFollow = true;
+        state.live =
+            false;
+
+        state.liveFollow =
+            true;
 
         setHidden(
             "startLiveNavigation",
@@ -4107,7 +3846,9 @@ window.ProMap = window.ProMap || {};
             true
         );
 
-        setGpsStatus("OFF");
+        setGpsStatus(
+            "OFF"
+        );
 
         setText(
             "liveChip",
@@ -4136,7 +3877,9 @@ window.ProMap = window.ProMap || {};
     }
 
     function useCurrentLocation() {
-        if (!navigator.geolocation) {
+        if (
+            !navigator.geolocation
+        ) {
             showError(
                 "Browser ne podržava GPS geolokaciju."
             );
@@ -4144,15 +3887,15 @@ window.ProMap = window.ProMap || {};
             return;
         }
 
-        showError("");
-
         setGpsStatus(
             "LOCATING",
             "warning"
         );
 
         navigator.geolocation.getCurrentPosition(
-            (position) => {
+            (
+                position
+            ) => {
                 const point = {
                     latitude:
                         position.coords
@@ -4166,28 +3909,34 @@ window.ProMap = window.ProMap || {};
                         "Moja trenutna lokacija"
                 };
 
-                $("navStart").value =
-                    `${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`;
+                if (
+                    $("navStart")
+                ) {
+                    $("navStart").value =
+                        `${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`;
+                }
 
-                setStart(point);
+                setStart(
+                    point
+                );
 
                 setGpsStatus(
                     "READY",
                     "ready"
                 );
 
-                if (state.map) {
-                    state.map.setView(
-                        [
-                            point.latitude,
-                            point.longitude
-                        ],
-                        14
-                    );
-                }
+                state.map?.setView(
+                    [
+                        point.latitude,
+                        point.longitude
+                    ],
+                    14
+                );
             },
 
-            (error) => {
+            (
+                error
+            ) => {
                 showError(
                     gpsErrorMessage(
                         error
@@ -4205,7 +3954,7 @@ window.ProMap = window.ProMap || {};
                     true,
 
                 maximumAge:
-                    0,
+                    5000,
 
                 timeout:
                     15000
@@ -4214,74 +3963,82 @@ window.ProMap = window.ProMap || {};
     }
 
     // ============================================================
-    // MAP MODES
+    // DEFAULTS
     // ============================================================
 
-    function setMapMode(mode) {
-        const ids = {
-            route:
-                "mapRouteTab",
-
-            restrictions:
-                "mapRestrictionsTab",
-
-            gps:
-                "mapGpsTab"
-        };
-
-        for (
-            const id of Object.values(
-                ids
-            )
+    function initializeDefaults() {
+        if (
+            $("navStart")
         ) {
-            $(id)
-                ?.classList.remove(
-                    "active"
-                );
-        }
-
-        $(ids[mode])
-            ?.classList.add(
-                "active"
-            );
-
-        if (mode === "route") {
-            fitRoute();
+            $("navStart").value =
+                $("navStart").value.trim() ||
+                DEFAULTS.start.label;
         }
 
         if (
-            mode ===
-            "restrictions"
+            $("navEnd")
         ) {
-            if (
-                $("warningsCard") &&
-                !$("warningsCard").hidden
-            ) {
-                $("warningsCard")
-                    .scrollIntoView({
-                        behavior:
-                            "smooth",
-
-                        block:
-                            "nearest"
-                    });
-            } else {
-                showError(
-                    "Izabrana ruta nema aktivna upozorenja."
-                );
-            }
+            $("navEnd").value =
+                $("navEnd").value.trim() ||
+                DEFAULTS.destination.label;
         }
 
-        if (mode === "gps") {
-            const position =
-                getCurrentGpsPosition();
+        setStart(
+            DEFAULTS.start
+        );
 
-            if (position) {
-                centerGps();
-            } else if (!state.live) {
-                startLiveNavigation();
-            }
-        }
+        setDestination(
+            DEFAULTS.destination
+        );
+
+        applyPreset(
+            $("truckPreset")
+                ?.value ||
+            "40t"
+        );
+
+        setProfile(
+            "truck"
+        );
+
+        setGpsStatus(
+            "OFF"
+        );
+
+        setText(
+            "engineHeader",
+            "POSTGIS"
+        );
+
+        setText(
+            "summaryEngine",
+            "—"
+        );
+
+        setText(
+            "liveChip",
+            "GPS OFF"
+        );
+
+        setText(
+            "liveSpeed",
+            "0 km/h"
+        );
+
+        setText(
+            "liveAccuracy",
+            "—"
+        );
+
+        setText(
+            "liveOffRoute",
+            "NE"
+        );
+
+        setText(
+            "livePosition",
+            "Lokacija nije aktivna"
+        );
     }
 
     // ============================================================
@@ -4292,7 +4049,8 @@ window.ProMap = window.ProMap || {};
         $("calcRoute")
             ?.addEventListener(
                 "click",
-                () => calculateRoute()
+                () =>
+                    calculateRoute()
             );
 
         $("swapPoints")
@@ -4322,7 +4080,9 @@ window.ProMap = window.ProMap || {};
         $("truckPreset")
             ?.addEventListener(
                 "change",
-                (event) =>
+                (
+                    event
+                ) =>
                     applyPreset(
                         event.target.value
                     )
@@ -4355,10 +4115,6 @@ window.ProMap = window.ProMap || {};
                     )
             );
 
-        // VAŽNO:
-        // pickEnd koristi "destination",
-        // jer map click handler očekuje
-        // state.picking === "destination".
         $("pickEnd")
             ?.addEventListener(
                 "click",
@@ -4384,27 +4140,36 @@ window.ProMap = window.ProMap || {};
             ?.addEventListener(
                 "click",
                 () =>
-                    setMapMode(
-                        "route"
-                    )
-            );
-
-        $("mapRestrictionsTab")
-            ?.addEventListener(
-                "click",
-                () =>
-                    setMapMode(
-                        "restrictions"
-                    )
+                    fitRoute()
             );
 
         $("mapGpsTab")
             ?.addEventListener(
                 "click",
                 () =>
-                    setMapMode(
-                        "gps"
-                    )
+                    centerGps()
+            );
+
+        $("mapRestrictionsTab")
+            ?.addEventListener(
+                "click",
+                () => {
+                    const card =
+                        $("warningsCard");
+
+                    if (
+                        card &&
+                        !card.hidden
+                    ) {
+                        card.scrollIntoView({
+                            behavior:
+                                "smooth",
+
+                            block:
+                                "nearest"
+                        });
+                    }
+                }
             );
 
         $("navStart")
@@ -4428,7 +4193,9 @@ window.ProMap = window.ProMap || {};
         $("navStart")
             ?.addEventListener(
                 "keydown",
-                async (event) => {
+                async (
+                    event
+                ) => {
                     if (
                         event.key !==
                         "Enter"
@@ -4442,7 +4209,14 @@ window.ProMap = window.ProMap || {};
                         await resolveInput(
                             "start"
                         );
-                    } catch (error) {
+
+                        clearSuggestions(
+                            "start"
+                        );
+                    }
+                    catch (
+                    error
+                    ) {
                         showError(
                             error?.message ||
                             "Start nije moguće pronaći."
@@ -4454,7 +4228,9 @@ window.ProMap = window.ProMap || {};
         $("navEnd")
             ?.addEventListener(
                 "keydown",
-                async (event) => {
+                async (
+                    event
+                ) => {
                     if (
                         event.key !==
                         "Enter"
@@ -4468,7 +4244,14 @@ window.ProMap = window.ProMap || {};
                         await resolveInput(
                             "end"
                         );
-                    } catch (error) {
+
+                        clearSuggestions(
+                            "end"
+                        );
+                    }
+                    catch (
+                    error
+                    ) {
                         showError(
                             error?.message ||
                             "Odredište nije moguće pronaći."
@@ -4479,7 +4262,9 @@ window.ProMap = window.ProMap || {};
 
         document.addEventListener(
             "click",
-            (event) => {
+            (
+                event
+            ) => {
                 if (
                     !event.target.closest(
                         ".nav-input-wrapper"
@@ -4501,102 +4286,10 @@ window.ProMap = window.ProMap || {};
             () => {
                 state.map
                     ?.invalidateSize();
+
+                state.tomTomMap
+                    ?.resize();
             }
-        );
-    }
-
-    // ============================================================
-    // DEFAULTS
-    // ============================================================
-
-    function initializeDefaults() {
-        if ($("navStart")) {
-            $("navStart").value =
-                $("navStart")
-                    .value
-                    ?.trim() ||
-                DEFAULTS.start.label;
-        }
-
-        if ($("navEnd")) {
-            $("navEnd").value =
-                $("navEnd")
-                    .value
-                    ?.trim() ||
-                DEFAULTS.destination.label;
-        }
-
-        setStart(
-            DEFAULTS.start
-        );
-
-        setDestination(
-            DEFAULTS.destination
-        );
-
-        applyPreset(
-            $("truckPreset")
-                ?.value ||
-            "40t"
-        );
-
-        updateVehicleMode();
-
-        setGpsStatus("OFF");
-
-        setText(
-            "engineHeader",
-            "POSTGIS"
-        );
-
-        setText(
-            "summaryEngine",
-            "—"
-        );
-
-        setText(
-            "diagnosticEngine",
-            "—"
-        );
-
-        setText(
-            "diagnosticGraph",
-            "—"
-        );
-
-        setText(
-            "diagnosticStates",
-            "—"
-        );
-
-        setText(
-            "diagnosticFallback",
-            "—"
-        );
-
-        setText(
-            "liveChip",
-            "GPS OFF"
-        );
-
-        setText(
-            "liveSpeed",
-            "0 km/h"
-        );
-
-        setText(
-            "liveAccuracy",
-            "—"
-        );
-
-        setText(
-            "liveOffRoute",
-            "NE"
-        );
-
-        setText(
-            "livePosition",
-            "Lokacija nije aktivna"
         );
     }
 
@@ -4616,9 +4309,11 @@ window.ProMap = window.ProMap || {};
                 state.map
                     ?.invalidateSize();
 
+                syncTomTomBackground();
+
                 fitRoute();
             },
-            200
+            250
         );
     }
 
@@ -4633,7 +4328,8 @@ window.ProMap = window.ProMap || {};
                 once: true
             }
         );
-    } else {
+    }
+    else {
         init();
     }
 })();
