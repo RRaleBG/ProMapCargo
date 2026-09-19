@@ -10,12 +10,14 @@ public sealed class MapTilesController(
     IHttpClientFactory httpClientFactory,
     IMemoryCache cache,
     IConfiguration configuration,
+    IWebHostEnvironment environment,
     ILogger<MapTilesController> logger) : ControllerBase
 {
-    private const string DefaultCustomStyleUrl =
-        "https://api.tomtom.com/style/2/custom/style/" +
-        "dG9tdG9tQEBANndOMmY2c2hkWEdNUTh2dDvHAUOO8wBB8Y5JhgFOxC6O/" +
-        "drafts/0";
+    private const string LocalTomTomStyleFile =
+        "street_driving_dark_orbis_draft.json";
+
+    private const string LocalTomTomStyleUrl =
+        "/styles/street_driving_dark_orbis_draft.json";
 
     private const string TomTomHost =
         "api.tomtom.com";
@@ -30,7 +32,30 @@ public sealed class MapTilesController(
         };
 
     // ============================================================
-    // CONFIG
+    // PATH HELPERS
+    // ============================================================
+
+    private string TomTomStyleFilePath()
+    {
+        var webRoot =
+            environment.WebRootPath;
+
+        if (string.IsNullOrWhiteSpace(webRoot))
+        {
+            webRoot =
+                Path.Combine(
+                    environment.ContentRootPath,
+                    "wwwroot");
+        }
+
+        return Path.Combine(
+            webRoot,
+            "styles",
+            LocalTomTomStyleFile);
+    }
+
+    // ============================================================
+    // MAP CONFIG
     // ============================================================
 
     [HttpGet("config")]
@@ -40,36 +65,54 @@ public sealed class MapTilesController(
             !string.IsNullOrWhiteSpace(
                 configuration["TomTom:ApiKey"]);
 
-        var customStyleUrl =
-            configuration["TomTom:CustomStyleUrl"];
-
-        if (string.IsNullOrWhiteSpace(customStyleUrl))
-        {
-            customStyleUrl =
-                DefaultCustomStyleUrl;
-        }
+        var styleExists =
+            System.IO.File.Exists(
+                TomTomStyleFilePath());
 
         return Ok(new
         {
             defaultBase =
-                hasTomTomKey
-                    ? "dark"
+                hasTomTomKey &&
+                styleExists
+                    ? "tomtom-custom"
                     : "osm",
 
             customStyleUrl =
-                hasTomTomKey
-                    ? "/api/map/tomtom/style"
+                styleExists
+                    ? LocalTomTomStyleUrl
                     : null,
 
             customStyleConfigured =
-                hasTomTomKey,
+                styleExists,
+
+            customStyleProvider =
+                "TomTom",
+
+            customStyleName =
+                "Dark Driving",
+
+            customStyleVersion =
+                "Draft",
+
+            customStyleFile =
+                LocalTomTomStyleUrl,
 
             layers = new[]
             {
                 new
                 {
+                    id = "tomtom-custom",
+                    label = "TomTom Dark · Custom",
+                    type = "base",
+                    enabled =
+                        hasTomTomKey &&
+                        styleExists
+                },
+
+                new
+                {
                     id = "dark",
-                    label = "TomTom Dark",
+                    label = "TomTom Dark Raster",
                     type = "base",
                     enabled = hasTomTomKey
                 },
@@ -110,13 +153,36 @@ public sealed class MapTilesController(
     }
 
     // ============================================================
-    // CUSTOM TOMTOM STYLE
+    // LOCAL TOMTOM CUSTOM STYLE
     // ============================================================
 
     [HttpGet("tomtom/style")]
     public async Task<IActionResult> TomTomStyle(
         CancellationToken ct)
     {
+        var stylePath =
+            TomTomStyleFilePath();
+
+        if (!System.IO.File.Exists(stylePath))
+        {
+            logger.LogError(
+                "TomTom custom style file not found: {Path}",
+                stylePath);
+
+            return NotFound(
+                new
+                {
+                    code =
+                        "tomtom_local_style_not_found",
+
+                    file =
+                        LocalTomTomStyleFile,
+
+                    path =
+                        stylePath
+                });
+        }
+
         var apiKey =
             configuration["TomTom:ApiKey"];
 
@@ -127,150 +193,161 @@ public sealed class MapTilesController(
                 new
                 {
                     code =
-                        "map_provider_not_configured"
+                        "tomtom_api_key_missing"
                 });
         }
 
-        var configuredStyleUrl =
-            configuration[
-                "TomTom:CustomStyleUrl"];
+        const string cacheKey =
+            "promap-local-tomtom-dark-style";
 
-        var styleUrl =
-            string.IsNullOrWhiteSpace(
-                configuredStyleUrl)
-                ? DefaultCustomStyleUrl
-                : configuredStyleUrl;
-
-        if (!TryBuildTomTomUri(
-                styleUrl,
-                out var uri,
-                out var error))
+        if (
+            cache.TryGetValue(
+                cacheKey,
+                out string? cachedStyle
+            ) &&
+            !string.IsNullOrWhiteSpace(
+                cachedStyle)
+        )
         {
-            return BadRequest(error);
+            Response.Headers.CacheControl =
+                "public,max-age=60";
+
+            return Content(
+                cachedStyle,
+                "application/json");
         }
 
         try
         {
-            var client =
-                httpClientFactory
-                    .CreateClient("MapTiles");
-
-            using var request =
-                new HttpRequestMessage(
-                    HttpMethod.Get,
-                    RemoveQueryParameter(
-                        uri,
-                        "key"));
-
-            /*
-             * API key ostaje isključivo na backendu.
-             */
-            request.Headers.TryAddWithoutValidation(
-                "TomTom-Api-Key",
-                apiKey);
-
-            request.Headers.TryAddWithoutValidation(
-                "Accept",
-                "application/json");
-
-            using var response =
-                await client.SendAsync(
-                    request,
-                    HttpCompletionOption.ResponseHeadersRead,
+            var json =
+                await System.IO.File.ReadAllTextAsync(
+                    stylePath,
                     ct);
 
-            var body =
-                await response.Content
-                    .ReadAsStringAsync(ct);
-
-            if (!response.IsSuccessStatusCode)
+            if (string.IsNullOrWhiteSpace(
+                    json))
             {
-                logger.LogWarning(
-                    "TomTom custom style failed. " +
-                    "HTTP {StatusCode}. URL: {Url}",
-                    (int)response.StatusCode,
-                    uri);
-
                 return StatusCode(
-                    (int)response.StatusCode,
-                    body);
+                    StatusCodes.Status502BadGateway,
+                    new
+                    {
+                        code =
+                            "tomtom_local_style_empty"
+                    });
             }
 
-            /*
-             * Veoma bitno:
-             *
-             * Style JSON može sadržati:
-             *
-             * - sources
-             * - sprite
-             * - glyphs
-             * - tile URL-ove
-             *
-             * Njih prepisujemo na naš server-side proxy.
-             */
-            string rewrittenStyle;
+            JsonDocument document;
 
             try
             {
-                using var document =
-                    JsonDocument.Parse(body);
-
-                var rewritten =
-                    RewriteTomTomResources(
-                        document.RootElement);
-
-                rewrittenStyle =
-                    JsonSerializer.Serialize(
-                        rewritten,
-                        new JsonSerializerOptions
-                        {
-                            WriteIndented = false
-                        });
+                document =
+                    JsonDocument.Parse(json);
             }
             catch (JsonException ex)
             {
-                logger.LogWarning(
+                logger.LogError(
                     ex,
-                    "TomTom returned invalid style JSON.");
+                    "Invalid local TomTom style JSON: {Path}",
+                    stylePath);
 
                 return StatusCode(
                     StatusCodes.Status502BadGateway,
                     new
                     {
                         code =
-                            "invalid_tomtom_style_json"
+                            "tomtom_local_style_invalid_json"
                     });
             }
 
-            Response.ContentType =
-                "application/json; charset=utf-8";
+            using (document)
+            {
+                var root =
+                    document.RootElement;
 
-            Response.Headers.CacheControl =
-                "public,max-age=300";
+                if (
+                    root.ValueKind !=
+                    JsonValueKind.Object
+                )
+                {
+                    return StatusCode(
+                        StatusCodes.Status502BadGateway,
+                        new
+                        {
+                            code =
+                                "tomtom_local_style_invalid_root"
+                        });
+                }
 
-            return Content(
-                rewrittenStyle,
-                "application/json");
+                var version =
+                    root.TryGetProperty(
+                        "version",
+                        out var versionProperty)
+                        ? versionProperty
+                            .GetInt32()
+                        : 0;
+
+                if (version != 8)
+                {
+                    return StatusCode(
+                        StatusCodes.Status502BadGateway,
+                        new
+                        {
+                            code =
+                                "tomtom_local_style_not_maplibre_v8",
+
+                            version
+                        });
+                }
+
+                /*
+                 * Proxy URL-ove koji se već nalaze
+                 * u local style JSON-u.
+                 *
+                 * API key nikada ne izlazi u browser.
+                 */
+                var rewritten =
+                    RewriteTomTomResources(
+                        root);
+
+                var output =
+                    JsonSerializer.Serialize(
+                        rewritten,
+                        new JsonSerializerOptions
+                        {
+                            WriteIndented = false
+                        });
+
+                cache.Set(
+                    cacheKey,
+                    output,
+                    TimeSpan.FromMinutes(5));
+
+                Response.Headers.CacheControl =
+                    "public,max-age=60";
+
+                return Content(
+                    output,
+                    "application/json");
+            }
         }
-        catch (
-            OperationCanceledException
-        )
+        catch (OperationCanceledException)
             when (ct.IsCancellationRequested)
         {
             throw;
         }
         catch (Exception ex)
         {
-            logger.LogWarning(
+            logger.LogError(
                 ex,
-                "TomTom custom style proxy failed.");
+                "Local TomTom custom style loading failed.");
 
             return StatusCode(
                 StatusCodes.Status502BadGateway,
                 new
                 {
                     code =
-                        "tomtom_style_proxy_failed",
+                        "tomtom_local_style_read_error",
+
                     message =
                         ex.Message
                 });
@@ -289,7 +366,64 @@ public sealed class MapTilesController(
         if (string.IsNullOrWhiteSpace(url))
         {
             return BadRequest(
-                "Missing url.");
+                new
+                {
+                    code =
+                        "missing_url"
+                });
+        }
+
+        if (
+            !Uri.TryCreate(
+                url,
+                UriKind.Absolute,
+                out var targetUri)
+        )
+        {
+            return BadRequest(
+                new
+                {
+                    code =
+                        "invalid_url"
+                });
+        }
+
+        /*
+         * SECURITY:
+         *
+         * Dozvoljen je samo TomTom API host.
+         *
+         * Ne želimo da ovaj endpoint postane
+         * proizvoljni SSRF proxy.
+         */
+        if (
+            !string.Equals(
+                targetUri.Host,
+                TomTomHost,
+                StringComparison.OrdinalIgnoreCase)
+        )
+        {
+            return BadRequest(
+                new
+                {
+                    code =
+                        "host_not_allowed"
+                });
+        }
+
+        if (
+            !string.Equals(
+                targetUri.Scheme,
+                Uri.UriSchemeHttps,
+                StringComparison.OrdinalIgnoreCase)
+        )
+        {
+            return BadRequest(
+                new
+                {
+                    code =
+                        "scheme_not_allowed"
+                });
         }
 
         var apiKey =
@@ -302,34 +436,35 @@ public sealed class MapTilesController(
                 new
                 {
                     code =
-                        "map_provider_not_configured"
+                        "tomtom_api_key_missing"
                 });
         }
 
-        if (!TryBuildTomTomUri(
-                url,
-                out var uri,
-                out var error))
-        {
-            return BadRequest(error);
-        }
+        var cleanUri =
+            RemoveQueryParameter(
+                targetUri,
+                "key");
+
+        cleanUri =
+            RemoveQueryParameter(
+                cleanUri,
+                "apiKey");
 
         try
         {
             var client =
                 httpClientFactory
-                    .CreateClient("MapTiles");
-
-            var cleanUri =
-                RemoveQueryParameter(
-                    uri,
-                    "key");
+                    .CreateClient(
+                        "MapTiles");
 
             using var request =
                 new HttpRequestMessage(
                     HttpMethod.Get,
                     cleanUri);
 
+            /*
+             * KEY OSTANE NA SERVERU.
+             */
             request.Headers.TryAddWithoutValidation(
                 "TomTom-Api-Key",
                 apiKey);
@@ -346,26 +481,42 @@ public sealed class MapTilesController(
 
             if (!response.IsSuccessStatusCode)
             {
+                var upstreamBody =
+                    await response.Content
+                        .ReadAsStringAsync(ct);
+
                 logger.LogWarning(
                     "TomTom proxy resource failed. " +
-                    "HTTP {StatusCode}, URL: {Url}",
+                    "HTTP {StatusCode}. " +
+                    "URL {Url}. " +
+                    "Body {Body}",
                     (int)response.StatusCode,
-                    cleanUri);
+                    cleanUri,
+                    upstreamBody);
 
                 return StatusCode(
-                    (int)response.StatusCode);
+                    (int)response.StatusCode,
+                    new
+                    {
+                        code =
+                            "tomtom_upstream_error",
+
+                        status =
+                            (int)response.StatusCode
+                    });
             }
 
             var contentType =
                 response.Content.Headers
                     .ContentType?
-                    .ToString();
+                    .MediaType;
 
             if (string.IsNullOrWhiteSpace(
                     contentType))
             {
                 contentType =
-                    "application/octet-stream";
+                    GuessContentType(
+                        cleanUri);
             }
 
             var bytes =
@@ -375,7 +526,12 @@ public sealed class MapTilesController(
             if (bytes.Length == 0)
             {
                 return StatusCode(
-                    StatusCodes.Status502BadGateway);
+                    StatusCodes.Status502BadGateway,
+                    new
+                    {
+                        code =
+                            "tomtom_empty_resource"
+                    });
             }
 
             Response.Headers.CacheControl =
@@ -385,19 +541,17 @@ public sealed class MapTilesController(
                 bytes,
                 contentType);
         }
-        catch (
-            OperationCanceledException
-        )
+        catch (OperationCanceledException)
             when (ct.IsCancellationRequested)
         {
             throw;
         }
         catch (Exception ex)
         {
-            logger.LogWarning(
+            logger.LogError(
                 ex,
-                "TomTom resource proxy failed: {Url}",
-                uri);
+                "TomTom resource proxy failed for {Url}",
+                cleanUri);
 
             return StatusCode(
                 StatusCodes.Status502BadGateway,
@@ -405,6 +559,7 @@ public sealed class MapTilesController(
                 {
                     code =
                         "tomtom_resource_proxy_failed",
+
                     message =
                         ex.Message
                 });
@@ -412,131 +567,11 @@ public sealed class MapTilesController(
     }
 
     // ============================================================
-    // REWRITE STYLE JSON
-    // ============================================================
-
-    private object? RewriteTomTomResources(
-        JsonElement element)
-    {
-        switch (element.ValueKind)
-        {
-            case JsonValueKind.Object:
-                {
-                    var dictionary =
-                        new Dictionary<string, object?>(
-                            StringComparer.Ordinal);
-
-                    foreach (
-                        var property
-                        in element.EnumerateObject())
-                    {
-                        dictionary[property.Name] =
-                            RewriteTomTomResources(
-                                property.Value);
-                    }
-
-                    return dictionary;
-                }
-
-            case JsonValueKind.Array:
-                {
-                    var list =
-                        new List<object?>();
-
-                    foreach (
-                        var item
-                        in element.EnumerateArray())
-                    {
-                        list.Add(
-                            RewriteTomTomResources(
-                                item));
-                    }
-
-                    return list;
-                }
-
-            case JsonValueKind.String:
-                {
-                    var value =
-                        element.GetString();
-
-                    if (
-                        !string.IsNullOrWhiteSpace(
-                            value) &&
-                        IsTomTomUrl(value))
-                    {
-                        return BuildProxyUrl(
-                            value);
-                    }
-
-                    return value;
-                }
-
-            case JsonValueKind.Number:
-                if (element.TryGetInt64(
-                        out var longValue))
-                {
-                    return longValue;
-                }
-
-                if (element.TryGetDouble(
-                        out var doubleValue))
-                {
-                    return doubleValue;
-                }
-
-                return null;
-
-            case JsonValueKind.True:
-                return true;
-
-            case JsonValueKind.False:
-                return false;
-
-            case JsonValueKind.Null:
-                return null;
-
-            default:
-                return null;
-        }
-    }
-
-    private static bool IsTomTomUrl(
-        string value)
-    {
-        if (!Uri.TryCreate(
-                value,
-                UriKind.Absolute,
-                out var uri))
-        {
-            return false;
-        }
-
-        return
-            uri.Scheme == Uri.UriSchemeHttps &&
-            uri.Host.Equals(
-                TomTomHost,
-                StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string BuildProxyUrl(
-        string value)
-    {
-        return
-            "/api/map/tomtom-proxy?url=" +
-            Uri.EscapeDataString(
-                RemoveQueryParameter(
-                    new Uri(value),
-                    "key").ToString());
-    }
-
-    // ============================================================
     // RASTER TILE ENDPOINT
     // ============================================================
 
     [HttpGet(
-        "tiles/{layer}/{zoom:int}/{x:int}/{y:int}.png"
-    )]
+        "tiles/{layer}/{zoom:int}/{x:int}/{y:int}.png")]
     public async Task<IActionResult> Tile(
         string layer,
         int zoom,
@@ -574,8 +609,7 @@ public sealed class MapTilesController(
             NormalizeX(
                 x,
                 checked(
-                    (int)tileCount
-                ));
+                    (int)tileCount));
 
         var apiKey =
             configuration[
@@ -598,6 +632,7 @@ public sealed class MapTilesController(
                 {
                     code =
                         "map_provider_not_configured",
+
                     layer
                 });
         }
@@ -622,7 +657,7 @@ public sealed class MapTilesController(
         }
 
         var url =
-            BuildUrl(
+            BuildRasterUrl(
                 layer,
                 zoom,
                 x,
@@ -730,9 +765,7 @@ public sealed class MapTilesController(
                 bytes,
                 contentType);
         }
-        catch (
-            OperationCanceledException
-        )
+        catch (OperationCanceledException)
             when (ct.IsCancellationRequested)
         {
             throw;
@@ -742,7 +775,7 @@ public sealed class MapTilesController(
             logger.LogWarning(
                 ex,
                 "Map tile proxy failed for " +
-                "{Layer} {Zoom}/{X}/{Y}.",
+                "{Layer} {Zoom}/{X}/{Y}",
                 layer,
                 zoom,
                 x,
@@ -754,10 +787,10 @@ public sealed class MapTilesController(
     }
 
     // ============================================================
-    // RASTER PROVIDER URL
+    // RASTER URLS
     // ============================================================
 
-    private string? BuildUrl(
+    private string? BuildRasterUrl(
         string layer,
         int zoom,
         int x,
@@ -768,21 +801,21 @@ public sealed class MapTilesController(
                 "TomTom:ApiKey"];
 
         if (
+            layer != "satellite" &&
             string.IsNullOrWhiteSpace(
-                apiKey) &&
-            layer != "satellite"
+                apiKey)
         )
         {
             return null;
         }
 
-        var style =
+        var trafficStyle =
             configuration[
-                "TomTom:TrafficStyle"
-            ] ?? "dark";
+                "TomTom:TrafficStyle"];
 
-        style =
-            style.Equals(
+        trafficStyle =
+            string.Equals(
+                trafficStyle,
                 "light",
                 StringComparison.OrdinalIgnoreCase)
                 ? "light"
@@ -798,21 +831,29 @@ public sealed class MapTilesController(
                 "https://api.tomtom.com/maps/orbis/" +
                 "traffic/flow/raster/tile/" +
                 $"{zoom}/{x}/{y}" +
-                $"?apiVersion=2&style={style}&key={escapedKey}",
+                $"?apiVersion=2" +
+                $"&style={trafficStyle}" +
+                $"&key={escapedKey}",
 
             "incidents" =>
                 "https://api.tomtom.com/maps/orbis/" +
                 "traffic/incidents/raster/tile/" +
                 $"{zoom}/{x}/{y}" +
-                $"?apiVersion=2&style={style}&key={escapedKey}",
+                $"?apiVersion=2" +
+                $"&style={trafficStyle}" +
+                $"&key={escapedKey}",
 
             "dark" =>
-                "https://api.tomtom.com/map/1/tile/basic/night/" +
-                $"{zoom}/{x}/{y}.png?key={escapedKey}",
+                "https://api.tomtom.com/map/1/tile/" +
+                "basic/night/" +
+                $"{zoom}/{x}/{y}.png" +
+                $"?key={escapedKey}",
 
             "satellite" =>
-                "https://server.arcgisonline.com/ArcGIS/rest/services/" +
-                $"World_Imagery/MapServer/tile/{zoom}/{y}/{x}",
+                "https://server.arcgisonline.com/" +
+                "ArcGIS/rest/services/" +
+                "World_Imagery/MapServer/tile/" +
+                $"{zoom}/{y}/{x}",
 
             _ =>
                 null
@@ -820,61 +861,159 @@ public sealed class MapTilesController(
     }
 
     // ============================================================
-    // URL SECURITY
+    // STYLE RESOURCE REWRITER
     // ============================================================
 
-    private static bool TryBuildTomTomUri(
-        string value,
-        out Uri uri,
-        out string error)
+    private static object? RewriteTomTomResources(
+        JsonElement element)
     {
-        uri =
-            null!;
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                {
+                    var result =
+                        new Dictionary<string, object?>(
+                            StringComparer.Ordinal);
 
-        error =
-            "";
+                    foreach (
+                        var property
+                        in element.EnumerateObject())
+                    {
+                        result[property.Name] =
+                            RewriteTomTomResources(
+                                property.Value);
+                    }
 
+                    return result;
+                }
+
+            case JsonValueKind.Array:
+                {
+                    var result =
+                        new List<object?>();
+
+                    foreach (
+                        var item
+                        in element.EnumerateArray())
+                    {
+                        result.Add(
+                            RewriteTomTomResources(
+                                item));
+                    }
+
+                    return result;
+                }
+
+            case JsonValueKind.String:
+                {
+                    var value =
+                        element.GetString();
+
+                    if (
+                        string.IsNullOrWhiteSpace(
+                            value)
+                    )
+                    {
+                        return value;
+                    }
+
+                    /*
+                     * Ako local style JSON sadrži direktan
+                     * TomTom URL, prebaci ga preko našeg proxy-ja.
+                     */
+                    if (
+                        IsTomTomUrl(value)
+                    )
+                    {
+                        var cleaned =
+                            RemoveTomTomApiKey(
+                                new Uri(value));
+
+                        return
+                            "/api/map/tomtom-proxy?url=" +
+                            Uri.EscapeDataString(
+                                cleaned.ToString());
+                    }
+
+                    return value;
+                }
+
+            case JsonValueKind.Number:
+                {
+                    if (
+                        element.TryGetInt64(
+                            out var integer)
+                    )
+                    {
+                        return integer;
+                    }
+
+                    if (
+                        element.TryGetDouble(
+                            out var number)
+                    )
+                    {
+                        return number;
+                    }
+
+                    return null;
+                }
+
+            case JsonValueKind.True:
+                return true;
+
+            case JsonValueKind.False:
+                return false;
+
+            case JsonValueKind.Null:
+                return null;
+
+            default:
+                return null;
+        }
+    }
+
+    private static bool IsTomTomUrl(
+        string value)
+    {
         if (
             !Uri.TryCreate(
                 value,
                 UriKind.Absolute,
-                out var parsed)
+                out var uri)
         )
         {
-            error =
-                "Invalid TomTom URL.";
-
             return false;
         }
 
-        if (
-            parsed.Scheme !=
-            Uri.UriSchemeHttps
-        )
-        {
-            error =
-                "Only HTTPS URLs are allowed.";
-
-            return false;
-        }
-
-        if (
-            !parsed.Host.Equals(
+        return
+            uri.Scheme ==
+                Uri.UriSchemeHttps
+            &&
+            uri.Host.Equals(
                 TomTomHost,
-                StringComparison.OrdinalIgnoreCase)
-        )
-        {
-            error =
-                "TomTom proxy target is not allowed.";
-
-            return false;
-        }
-
-        uri =
-            parsed;
-
-        return true;
+                StringComparison.OrdinalIgnoreCase);
     }
+
+    private static Uri RemoveTomTomApiKey(
+        Uri uri)
+    {
+        var result =
+            RemoveQueryParameter(
+                uri,
+                "key");
+
+        result =
+            RemoveQueryParameter(
+                result,
+                "apiKey");
+
+        return result;
+    }
+
+    // ============================================================
+    // QUERY PARAMETER HELPERS
+    // ============================================================
 
     private static Uri RemoveQueryParameter(
         Uri uri,
@@ -899,21 +1038,127 @@ public sealed class MapTilesController(
                 '&',
                 StringSplitOptions.RemoveEmptyEntries);
 
-        var filtered =
-            parts
-                .Where(
-                    part =>
-                        !part.StartsWith(
-                            parameterName + "=",
-                            StringComparison.OrdinalIgnoreCase))
-                .ToArray();
+        var remaining =
+            new List<string>();
+
+        foreach (
+            var part
+            in parts)
+        {
+            var separator =
+                part.IndexOf('=');
+
+            var name =
+                separator >= 0
+                    ? part[..separator]
+                    : part;
+
+            if (
+                string.Equals(
+                    Uri.UnescapeDataString(
+                        name),
+                    parameterName,
+                    StringComparison.OrdinalIgnoreCase)
+            )
+            {
+                continue;
+            }
+
+            remaining.Add(
+                part);
+        }
 
         builder.Query =
             string.Join(
                 "&",
-                filtered);
+                remaining);
 
         return builder.Uri;
+    }
+
+    // ============================================================
+    // CONTENT TYPE
+    // ============================================================
+
+    private static string GuessContentType(
+        Uri uri)
+    {
+        var path =
+            uri.AbsolutePath
+                .ToLowerInvariant();
+
+        if (
+            path.EndsWith(
+                ".json",
+                StringComparison.Ordinal)
+        )
+        {
+            return "application/json";
+        }
+
+        if (
+            path.EndsWith(
+                ".pbf",
+                StringComparison.Ordinal)
+        )
+        {
+            return "application/x-protobuf";
+        }
+
+        if (
+            path.EndsWith(
+                ".png",
+                StringComparison.Ordinal)
+        )
+        {
+            return "image/png";
+        }
+
+        if (
+            path.EndsWith(
+                ".webp",
+                StringComparison.Ordinal)
+        )
+        {
+            return "image/webp";
+        }
+
+        if (
+            path.EndsWith(
+                ".jpg",
+                StringComparison.Ordinal)
+            ||
+            path.EndsWith(
+                ".jpeg",
+                StringComparison.Ordinal)
+        )
+        {
+            return "image/jpeg";
+        }
+
+        if (
+            path.EndsWith(
+                ".svg",
+                StringComparison.Ordinal)
+        )
+        {
+            return "image/svg+xml";
+        }
+
+        if (
+            path.EndsWith(
+                ".woff",
+                StringComparison.Ordinal)
+            ||
+            path.EndsWith(
+                ".woff2",
+                StringComparison.Ordinal)
+        )
+        {
+            return "font/woff";
+        }
+
+        return "application/octet-stream";
     }
 
     // ============================================================

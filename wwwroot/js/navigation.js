@@ -7,9 +7,7 @@ window.ProMap = window.ProMap || {};
         return;
     }
 
-    const root = document.querySelector(
-        '[data-module="navigation"]'
-    );
+    const root = document.querySelector('[data-module="navigation"]');
 
     if (!root) {
         return;
@@ -19,31 +17,8 @@ window.ProMap = window.ProMap || {};
 
     const $ = (id) => document.getElementById(id);
 
-    /*
-     * Server vraća custom TomTom style URL.
-     *
-     * API key nikada nije u ovom JavaScript fajlu.
-     */
-    const TOMTOM_STYLE_FALLBACK =
-        "/api/map/tomtom/style";
-
-    /*
-     * MapLibre učitava dodatne TomTom style/source/sprite/glyph
-     * resurse. Oni prolaze kroz server-side proxy tako da API
-     * key ostaje na backendu.
-     */
-    const TOMTOM_PROXY_PREFIX =
-        "/api/map/tomtom-proxy";
-
     const state = {
         map: null,
-
-        /*
-         * TomTom custom vector map.
-         */
-        tomTomMap: null,
-        tomTomHost: null,
-        tomTomFallbackLayer: null,
 
         start: null,
         destination: null,
@@ -56,21 +31,35 @@ window.ProMap = window.ProMap || {};
         routeResponse: null,
         selectedRouteIndex: 0,
         routeCoordinates: [],
+        routeCumulativeDistances: [],
 
         maneuvers: [],
         maneuverIndex: 0,
+        routeProgressMeters: 0,
 
-        routing: false,
-        live: false,
         liveFollow: true,
-
+        profile: "truck",
         picking: null,
-
-        lastRerouteAt: 0,
 
         geocodeTimers: {
             start: null,
             end: null
+        },
+
+        routing: false,
+        live: false,
+        lastRerouteAt: 0,
+
+        tomTom: {
+            host: null,
+            map: null,
+            layer: null,
+            fallbackLayer: null,
+            loading: null,
+            ready: false,
+            failed: false,
+            visible: false,
+            lastError: null
         }
     };
 
@@ -80,7 +69,6 @@ window.ProMap = window.ProMap || {};
             longitude: 20.4573,
             label: "Beograd, Srbija"
         },
-
         destination: {
             latitude: 45.2551,
             longitude: 19.8335,
@@ -91,52 +79,55 @@ window.ProMap = window.ProMap || {};
     const PRESETS = {
         "40t": {
             weight: 40,
-            height: 4,
+            height: 4.0,
             width: 2.55,
             length: 16.5,
             axleLoad: 10,
             axles: 5,
             maxSpeed: 90
         },
-
         "12t": {
             weight: 12,
             height: 3.8,
             width: 2.55,
-            length: 12,
+            length: 12.0,
             axleLoad: 8,
             axles: 3,
             maxSpeed: 90
         },
-
         "7.5t": {
             weight: 7.5,
             height: 3.5,
             width: 2.5,
-            length: 9,
+            length: 9.0,
             axleLoad: 7,
             axles: 2,
             maxSpeed: 90
         },
-
         "3.5t": {
             weight: 3.5,
             height: 3.2,
             width: 2.2,
-            length: 7,
+            length: 7.0,
             axleLoad: 4,
             axles: 2,
             maxSpeed: 90
         }
     };
 
-    // ============================================================
-    // COMMON HELPERS
-    // ============================================================
+    const MAPLIBRE_CSS_ID = "promap-maplibre-css";
+    const MAPLIBRE_MODULE_URL = "https://unpkg.com/maplibre-gl@6.10.0/dist/maplibre-gl.mjs";
+
+    //const TOMTOM_STYLE_ENDPOINT = "/api/map/tomtom/style";
+    const TOMTOM_LOCAL_STYLE = "/styles/street_driving_dark_orbis_draft.json";
+
+    const TOMTOM_PROXY_ENDPOINT = "/api/map/tomtom-proxy";
+
+    const TOMTOM_GLYPHS_TEMPLATE = "https://api.tomtom.com/maps-sdk-js/glyphs/v1/{fontstack}/{range}.pbf";
+
 
     function setText(id, value) {
         const element = $(id);
-
         if (element) {
             element.textContent = value ?? "";
         }
@@ -144,7 +135,6 @@ window.ProMap = window.ProMap || {};
 
     function setHidden(id, hidden) {
         const element = $(id);
-
         if (element) {
             element.hidden = Boolean(hidden);
         }
@@ -152,18 +142,12 @@ window.ProMap = window.ProMap || {};
 
     function numberValue(id, fallback) {
         const element = $(id);
-
         if (!element) {
             return fallback;
         }
 
-        const value = Number.parseFloat(
-            element.value
-        );
-
-        return Number.isFinite(value)
-            ? value
-            : fallback;
+        const value = Number.parseFloat(element.value);
+        return Number.isFinite(value) ? value : fallback;
     }
 
     function escapeHtml(value) {
@@ -177,7 +161,6 @@ window.ProMap = window.ProMap || {};
 
     function showError(message) {
         const element = $("navError");
-
         if (!element) {
             return;
         }
@@ -186,276 +169,130 @@ window.ProMap = window.ProMap || {};
         element.hidden = !message;
     }
 
-    function setGpsStatus(
-        value,
-        kind = ""
-    ) {
+    function setGpsStatus(text, kind = "") {
         const element = $("gpsStatus");
-
         if (!element) {
             return;
         }
 
-        element.textContent = value;
-
-        element.classList.remove(
-            "ready",
-            "warning",
-            "danger"
-        );
+        element.textContent = text;
+        element.classList.remove("ready", "warning", "danger");
 
         if (kind) {
             element.classList.add(kind);
         }
     }
 
-    function setEngine(
-        engine,
-        usedFallback = false
-    ) {
-        const normalized =
-            String(engine || "PostGIS");
+    function setEngine(engine, usedFallback = false) {
+        const normalized = String(engine || "PostGIS");
+        const summary = usedFallback
+            ? `${normalized} · FALLBACK`
+            : normalized;
 
-        const display =
-            usedFallback
-                ? `${normalized} · FALLBACK`
-                : normalized;
+        setText("engineHeader", normalized.toUpperCase());
+        setText("summaryEngine", summary);
+        setText("diagnosticEngine", normalized);
+        setText("diagnosticFallback", usedFallback ? "DA" : "NE");
 
-        setText(
-            "engineHeader",
-            normalized.toUpperCase()
-        );
-
-        setText(
-            "summaryEngine",
-            display
-        );
-
-        setText(
-            "diagnosticEngine",
-            normalized
-        );
-
-        setText(
-            "diagnosticFallback",
-            usedFallback
-                ? "DA"
-                : "NE"
-        );
-
-        const badge =
-            $("engineBadge");
-
+        const badge = $("engineBadge");
         if (badge) {
-            badge.classList.remove(
-                "error"
-            );
-
-            badge.classList.add(
-                "ready"
-            );
-
+            badge.classList.remove("error");
+            badge.classList.add("ready");
             badge.innerHTML =
-                `<span></span>${escapeHtml(
-                    display.toUpperCase()
-                )}`;
+                `<span></span>${escapeHtml(summary.toUpperCase())}`;
         }
-
-        setText(
-            "engineFooter",
-            usedFallback
-                ? "OSRM fallback"
-                : "Graph protected"
-        );
     }
 
-    function setRoutingUi(
-        isRouting
-    ) {
-        state.routing =
-            isRouting;
+    function setRoutingUi(routing) {
+        state.routing = Boolean(routing);
 
-        const button =
-            $("calcRoute");
-
+        const button = $("calcRoute");
         if (!button) {
             return;
         }
 
-        button.disabled =
-            isRouting;
+        button.disabled = state.routing;
 
-        const strong =
-            button.querySelector(
-                "strong"
-            );
-
-        if (strong) {
-            strong.textContent =
-                isRouting
-                    ? "Računam rutu…"
-                    : state.profile === "truck"
-                        ? "Izračunaj truck rutu"
-                        : "Izračunaj auto rutu";
+        const label = button.querySelector("strong");
+        if (label) {
+            label.textContent = state.routing
+                ? "Računam rutu…"
+                : state.profile === "truck"
+                    ? "Izračunaj truck rutu"
+                    : "Izračunaj auto rutu";
         }
     }
 
-    function formatDistance(
-        meters
-    ) {
-        if (
-            window.ProMap.Maneuvers
-                ?.formatDistance
-        ) {
-            return window.ProMap.Maneuvers
-                .formatDistance(
-                    meters
-                );
-        }
-
-        const value =
-            Number(meters);
-
-        if (
-            !Number.isFinite(
-                value
-            )
-        ) {
+    function formatDistance(meters) {
+        const value = Number(meters);
+        if (!Number.isFinite(value)) {
             return "—";
         }
 
-        if (
-            value < 1000
-        ) {
-            return `${Math.round(
-                value
-            )} m`;
+        if (window.ProMap.Maneuvers?.formatDistance) {
+            return window.ProMap.Maneuvers.formatDistance(value);
         }
 
-        return `${(
-            value / 1000
-        ).toFixed(1)} km`;
+        if (value >= 1000) {
+            return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)} km`;
+        }
+
+        return `${Math.round(value)} m`;
     }
 
-    function formatDuration(
-        seconds
-    ) {
-        if (
-            window.ProMap.Maneuvers
-                ?.formatDuration
-        ) {
-            return window.ProMap.Maneuvers
-                .formatDuration(
-                    seconds
-                );
-        }
-
-        const value =
-            Number(seconds);
-
-        if (
-            !Number.isFinite(
-                value
-            )
-        ) {
+    function formatDuration(seconds) {
+        const value = Number(seconds);
+        if (!Number.isFinite(value)) {
             return "—";
         }
 
-        const minutes =
-            Math.max(
-                0,
-                Math.round(
-                    value / 60
-                )
-            );
-
-        if (
-            minutes < 60
-        ) {
-            return `${minutes} min`;
+        if (window.ProMap.Maneuvers?.formatDuration) {
+            return window.ProMap.Maneuvers.formatDuration(value);
         }
 
-        return `${Math.floor(
-            minutes / 60
-        )} h ${minutes % 60} min`;
+        const minutes = Math.max(0, Math.round(value / 60));
+        const hours = Math.floor(minutes / 60);
+        const remainder = minutes % 60;
+
+        return hours > 0
+            ? `${hours} h ${String(remainder).padStart(2, "0")} min`
+            : `${minutes} min`;
     }
 
-    function formatEta(
-        value,
-        durationSeconds
-    ) {
+    function formatEta(value, durationSeconds = null) {
         let date = null;
 
         if (value) {
-            date = new Date(
-                value
-            );
-        }
-        else if (
-            Number.isFinite(
-                Number(durationSeconds)
-            )
-        ) {
-            date =
-                new Date(
-                    Date.now() +
-                    Number(durationSeconds) *
-                    1000
-                );
+            date = new Date(value);
+        } else if (Number.isFinite(Number(durationSeconds))) {
+            date = new Date(Date.now() + Number(durationSeconds) * 1000);
         }
 
-        if (
-            !date ||
-            Number.isNaN(
-                date.getTime()
-            )
-        ) {
+        if (!date || Number.isNaN(date.getTime())) {
             return "—";
         }
 
-        return new Intl.DateTimeFormat(
-            "sr-RS",
-            {
-                hour: "2-digit",
-                minute: "2-digit"
-            }
-        ).format(
-            date
-        );
+        return new Intl.DateTimeFormat("sr-RS", {
+            hour: "2-digit",
+            minute: "2-digit"
+        }).format(date);
     }
 
-    // ============================================================
-    // COORDINATES
-    // ============================================================
-
-    function normalizePoint(
-        point
-    ) {
+    function normalizePoint(point) {
         if (!point) {
             return null;
         }
 
-        const latitude =
-            Number(
-                point.latitude ??
-                point.lat ??
-                point.Lat
-            );
-
-        const longitude =
-            Number(
-                point.longitude ??
-                point.lon ??
-                point.Lon
-            );
+        const latitude = Number(
+            point.latitude ?? point.lat ?? point.Lat
+        );
+        const longitude = Number(
+            point.longitude ?? point.lon ?? point.Lon
+        );
 
         if (
-            !Number.isFinite(
-                latitude
-            ) ||
-            !Number.isFinite(
-                longitude
-            ) ||
+            !Number.isFinite(latitude) ||
+            !Number.isFinite(longitude) ||
             latitude < -90 ||
             latitude > 90 ||
             longitude < -180 ||
@@ -476,302 +313,183 @@ window.ProMap = window.ProMap || {};
         };
     }
 
-    function parseCoordinateText(
-        value
-    ) {
-        const text =
-            String(value || "")
-                .trim();
-
-        const match =
-            text.match(
-                /^\s*(-?\d+(?:[.,]\d+)?)\s*[,;]\s*(-?\d+(?:[.,]\d+)?)\s*$/
-            );
+    function parseCoordinateText(value) {
+        const text = String(value || "").trim();
+        const match = text.match(
+            /^\s*(-?\d+(?:[.,]\d+)?)\s*[,;]\s*(-?\d+(?:[.,]\d+)?)\s*$/
+        );
 
         if (!match) {
             return null;
         }
 
         return normalizePoint({
-            latitude:
-                Number(
-                    match[1].replace(
-                        ",",
-                        "."
-                    )
-                ),
-
-            longitude:
-                Number(
-                    match[2].replace(
-                        ",",
-                        "."
-                    )
-                )
+            latitude: Number(match[1].replace(",", ".")),
+            longitude: Number(match[2].replace(",", "."))
         });
     }
 
-    // ============================================================
-    // GEOMETRY
-    // ============================================================
-
-    function geometryToLatLngs(
-        geometry
-    ) {
+    function geometryToLatLngs(geometry) {
         if (!geometry) {
             return [];
         }
 
-        let value =
-            geometry;
+        let value = geometry;
 
-        if (
-            typeof value ===
-            "string"
-        ) {
+        if (typeof value === "string") {
             try {
-                value =
-                    JSON.parse(
-                        value
-                    );
-            }
-            catch {
+                value = JSON.parse(value);
+            } catch {
                 return [];
             }
         }
 
-        if (
-            value?.type ===
-            "Feature"
-        ) {
-            value =
-                value.geometry;
+        if (Array.isArray(value)) {
+            return value
+                .filter(
+                    (point) =>
+                        Array.isArray(point) &&
+                        point.length >= 2
+                )
+                .map((point) => [Number(point[1]), Number(point[0])])
+                .filter(
+                    (point) =>
+                        Number.isFinite(point[0]) &&
+                        Number.isFinite(point[1])
+                );
+        }
+
+        if (value?.type === "Feature") {
+            value = value.geometry;
         }
 
         if (
             !value ||
             !value.type ||
-            !Array.isArray(
-                value.coordinates
-            )
+            !Array.isArray(value.coordinates)
         ) {
             return [];
         }
 
-        const normalizeLine =
-            (line) =>
-                Array.isArray(line)
-                    ? line
-                        .filter(
-                            (point) =>
-                                Array.isArray(
-                                    point
-                                ) &&
-                                point.length >= 2
-                        )
-                        .map(
-                            (point) => [
-                                Number(
-                                    point[1]
-                                ),
-                                Number(
-                                    point[0]
-                                )
-                            ]
-                        )
-                        .filter(
-                            (point) =>
-                                Number.isFinite(
-                                    point[0]
-                                ) &&
-                                Number.isFinite(
-                                    point[1]
-                                )
-                        )
-                    : [];
-
-        if (
-            value.type ===
-            "LineString"
-        ) {
-            return normalizeLine(
-                value.coordinates
-            );
+        if (value.type === "LineString") {
+            return value.coordinates
+                .filter(
+                    (point) =>
+                        Array.isArray(point) &&
+                        point.length >= 2
+                )
+                .map((point) => [Number(point[1]), Number(point[0])])
+                .filter(
+                    (point) =>
+                        Number.isFinite(point[0]) &&
+                        Number.isFinite(point[1])
+                );
         }
 
-        if (
-            value.type ===
-            "MultiLineString"
-        ) {
+        if (value.type === "MultiLineString") {
             return value.coordinates
-                .flatMap(
-                    normalizeLine
+                .flatMap((line) =>
+                    Array.isArray(line)
+                        ? line
+                            .filter(
+                                (point) =>
+                                    Array.isArray(point) &&
+                                    point.length >= 2
+                            )
+                            .map((point) => [Number(point[1]), Number(point[0])])
+                        : []
+                )
+                .filter(
+                    (point) =>
+                        Number.isFinite(point[0]) &&
+                        Number.isFinite(point[1])
                 );
         }
 
         return [];
     }
 
-    function haversineMeters(
-        aLat,
-        aLon,
-        bLat,
-        bLon
-    ) {
-        const earth =
-            6371000;
-
-        const dLat =
-            (
-                (bLat - aLat) *
-                Math.PI
-            ) / 180;
-
-        const dLon =
-            (
-                (bLon - aLon) *
-                Math.PI
-            ) / 180;
-
-        const lat1 =
-            (
-                aLat *
-                Math.PI
-            ) / 180;
-
-        const lat2 =
-            (
-                bLat *
-                Math.PI
-            ) / 180;
+    function haversineMeters(aLat, aLon, bLat, bLon) {
+        const earth = 6371000;
+        const dLat = ((bLat - aLat) * Math.PI) / 180;
+        const dLon = ((bLon - aLon) * Math.PI) / 180;
+        const lat1 = (aLat * Math.PI) / 180;
+        const lat2 = (bLat * Math.PI) / 180;
 
         const a =
-            Math.sin(
-                dLat / 2
-            ) ** 2 +
-            Math.cos(
-                lat1
-            ) *
-            Math.cos(
-                lat2
-            ) *
-            Math.sin(
-                dLon / 2
-            ) ** 2;
+            Math.sin(dLat / 2) ** 2 +
+            Math.cos(lat1) *
+            Math.cos(lat2) *
+            Math.sin(dLon / 2) ** 2;
 
-        return (
-            2 *
-            earth *
-            Math.atan2(
-                Math.sqrt(a),
-                Math.sqrt(
-                    1 - a
-                )
-            )
-        );
+        return 2 * earth * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
-    function distanceToRouteMeters(
-        latitude,
-        longitude
-    ) {
-        if (
-            !Array.isArray(
-                state.routeCoordinates
-            ) ||
-            state.routeCoordinates.length ===
-            0
-        ) {
+    function distanceToRouteMeters(latitude, longitude) {
+        if (state.routeCoordinates.length === 0) {
             return null;
         }
 
-        let best =
-            Infinity;
-
-        for (
-            const point
-            of state.routeCoordinates
-        ) {
-            best =
-                Math.min(
-                    best,
-                    haversineMeters(
-                        latitude,
-                        longitude,
-                        point[0],
-                        point[1]
-                    )
-                );
+        let best = Infinity;
+        for (const point of state.routeCoordinates) {
+            best = Math.min(
+                best,
+                haversineMeters(
+                    latitude,
+                    longitude,
+                    point[0],
+                    point[1]
+                )
+            );
         }
 
-        return Number.isFinite(
-            best
-        )
-            ? best
-            : null;
+        return Number.isFinite(best) ? best : null;
     }
 
-    // ============================================================
-    // GPS SERVICE
-    // ============================================================
+    function distanceToManeuverMeters(position, maneuver) {
+        if (!position || !maneuver) {
+            return null;
+        }
+
+        const latitude = Number(maneuver.latitude);
+        const longitude = Number(maneuver.longitude);
+
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+            return null;
+        }
+
+        return haversineMeters(
+            Number(position.latitude),
+            Number(position.longitude),
+            latitude,
+            longitude
+        );
+    }
 
     function getCurrentGpsPosition() {
-        const position =
-            window.ProMap.Gps
-                ?.getPosition?.();
-
+        const position = window.ProMap.Gps?.getPosition?.();
         if (!position) {
             return null;
         }
 
-        const latitude =
-            Number(
-                position.latitude ??
-                position.coords?.latitude
-            );
+        const latitude = Number(
+            position.latitude ?? position.coords?.latitude
+        );
+        const longitude = Number(
+            position.longitude ?? position.coords?.longitude
+        );
 
-        const longitude =
-            Number(
-                position.longitude ??
-                position.coords?.longitude
-            );
-
-        if (
-            !Number.isFinite(
-                latitude
-            ) ||
-            !Number.isFinite(
-                longitude
-            )
-        ) {
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
             return null;
         }
 
         return {
             latitude,
             longitude,
-
-            accuracy:
-                Number(
-                    position.accuracy ??
-                    position.coords?.accuracy
-                ),
-
-            heading:
-                Number(
-                    position.heading ??
-                    position.coords?.heading
-                ),
-
-            speed:
-                Number(
-                    position.speed ??
-                    position.coords?.speed
-                ),
-
-            timestamp:
-                position.timestamp ??
-                position.coords?.timestamp
+            accuracy: Number(position.accuracy ?? position.coords?.accuracy),
+            heading: Number(position.heading ?? position.coords?.heading),
+            speed: Number(position.speed ?? position.coords?.speed),
+            timestamp: position.timestamp ?? position.coords?.timestamp
         };
     }
 
@@ -779,441 +497,480 @@ window.ProMap = window.ProMap || {};
     // TOMTOM / MAPLIBRE
     // ============================================================
 
-    function proxyTomTomUrl(
-        url
-    ) {
-        try {
-            const parsed =
-                new URL(
-                    url,
-                    window.location.origin
-                );
-
-            if (
-                parsed.protocol !==
-                "https:" ||
-                parsed.hostname !==
-                "api.tomtom.com"
-            ) {
-                return url;
-            }
-
-            return (
-                `${TOMTOM_PROXY_PREFIX}?url=` +
-                encodeURIComponent(
-                    parsed.toString()
-                )
-            );
+    function ensureMapLibreCss() {
+        if (document.getElementById(MAPLIBRE_CSS_ID)) {
+            return;
         }
-        catch {
-            return url;
+
+        const link = document.createElement("link");
+        link.id = MAPLIBRE_CSS_ID;
+        link.rel = "stylesheet";
+        link.href = "https://unpkg.com/maplibre-gl@6.10.0/dist/maplibre-gl.css";
+        document.head.appendChild(link);
+    }
+
+    async function loadMapLibre() {
+        if (window.__promapMapLibrePromise) {
+            return window.__promapMapLibrePromise;
+        }
+
+        ensureMapLibreCss();
+
+        window.__promapMapLibrePromise = import(MAPLIBRE_MODULE_URL)
+            .then((module) => module)
+            .catch((error) => {
+                window.__promapMapLibrePromise = null;
+                throw error;
+            });
+
+        return window.__promapMapLibrePromise;
+    }
+
+    function cleanTomTomUrl(value) {
+        try {
+            const url = new URL(value, window.location.origin);
+            url.searchParams.delete("key");
+            url.searchParams.delete("apiKey");
+            return url.toString();
+        } catch {
+            return String(value || "");
         }
     }
 
-    function loadMapLibre() {
-        if (
-            window.maplibregl
-        ) {
-            return Promise.resolve(
-                window.maplibregl
-            );
+    function tomTomResourceTransform(url) {
+        try {
+            const resolved = new URL(url, window.location.origin);
+
+            if (
+                resolved.hostname === "api.tomtom.com" ||
+                resolved.hostname.endsWith(".api.tomtom.com")
+            ) {
+                const clean = cleanTomTomUrl(resolved.toString());
+                return `${TOMTOM_PROXY_ENDPOINT}?url=${encodeURIComponent(clean)}`;
+            }
+        } catch {
+            // Return the original URL below.
         }
 
-        if (
-            window.__promapMapLibrePromise
-        ) {
-            return window
-                .__promapMapLibrePromise;
+        return url;
+    }
+
+    function prepareTomTomHost(mapElement) {
+        if (state.tomTom.host) {
+            return state.tomTom.host;
         }
 
-        window
-            .__promapMapLibrePromise =
-            new Promise(
-                (
-                    resolve,
-                    reject
-                ) => {
+        const host = document.createElement("div");
+        host.id = "promap-tomtom-custom-map";
+        host.setAttribute("aria-hidden", "true");
+        host.style.position = "absolute";
+        host.style.inset = "0";
+        host.style.width = "100%";
+        host.style.height = "100%";
+        host.style.zIndex = "1";
+        host.style.pointerEvents = "none";
+        host.style.visibility = "hidden";
+        host.style.overflow = "hidden";
+        host.style.borderRadius = "inherit";
 
-                    const cssHref =
-                        "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css";
+        mapElement.appendChild(host);
+        state.tomTom.host = host;
 
-                    const jsSrc =
-                        "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js";
-
-                    if (
-                        !document.querySelector(
-                            `link[href="${cssHref}"]`
-                        )
-                    ) {
-                        const link =
-                            document.createElement(
-                                "link"
-                            );
-
-                        link.rel =
-                            "stylesheet";
-
-                        link.href =
-                            cssHref;
-
-                        document.head.appendChild(
-                            link
-                        );
-                    }
-
-                    const existing =
-                        document.querySelector(
-                            `script[src="${jsSrc}"]`
-                        );
-
-                    if (
-                        existing
-                    ) {
-                        existing.addEventListener(
-                            "load",
-                            () =>
-                                window.maplibregl
-                                    ? resolve(
-                                        window.maplibregl
-                                    )
-                                    : reject(
-                                        new Error(
-                                            "MapLibre GL nije dostupan."
-                                        )
-                                    ),
-                            {
-                                once: true
-                            }
-                        );
-
-                        existing.addEventListener(
-                            "error",
-                            () =>
-                                reject(
-                                    new Error(
-                                        "MapLibre GL JS nije moguće učitati."
-                                    )
-                                ),
-                            {
-                                once: true
-                            }
-                        );
-
-                        return;
-                    }
-
-                    const script =
-                        document.createElement(
-                            "script"
-                        );
-
-                    script.src =
-                        jsSrc;
-
-                    script.async =
-                        true;
-
-                    script.onload =
-                        () => {
-                            if (
-                                window.maplibregl
-                            ) {
-                                resolve(
-                                    window.maplibregl
-                                );
-                            }
-                            else {
-                                reject(
-                                    new Error(
-                                        "MapLibre GL JS nije dostupan."
-                                    )
-                                );
-                            }
-                        };
-
-                    script.onerror =
-                        () =>
-                            reject(
-                                new Error(
-                                    "MapLibre GL JS CDN nije dostupan."
-                                )
-                            );
-
-                    document.head.appendChild(
-                        script
-                    );
-                }
-            );
-
-        return window
-            .__promapMapLibrePromise;
+        return host;
     }
 
     function syncTomTomBackground() {
-        if (
-            !state.map ||
-            !state.tomTomMap
-        ) {
+        const tomTomMap = state.tomTom.map;
+        const leafletMap = state.map;
+
+        if (!tomTomMap || !leafletMap) {
             return;
         }
 
-        const center =
-            state.map.getCenter();
+        const center = leafletMap.getCenter();
+        const zoom = leafletMap.getZoom();
 
-        const zoom =
-            state.map.getZoom();
-
-        state.tomTomMap.jumpTo({
-            center: [
-                center.lng,
-                center.lat
-            ],
-            zoom
-        });
-
-        state.tomTomMap.resize();
+        try {
+            tomTomMap.jumpTo({
+                center: [center.lng, center.lat],
+                zoom,
+                bearing: 0,
+                pitch: 0
+            });
+        } catch {
+            // Ignore transient MapLibre lifecycle errors.
+        }
     }
 
-    function activateTomTomRasterFallback() {
-        if (
-            !state.map ||
-            !window.L ||
-            state.tomTomFallbackLayer
-        ) {
+    function setTomTomHostVisible(visible) {
+        const host = state.tomTom.host;
+        if (!host) {
             return;
         }
 
-        state.tomTomFallbackLayer =
-            L.tileLayer(
+        host.style.visibility = visible ? "visible" : "hidden";
+        state.tomTom.visible = Boolean(visible);
+
+        if (state.map) {
+            state.map.getContainer().style.background = visible
+                ? "transparent"
+                : "#0b3b31";
+        }
+    }
+
+    function addTomTomFallback() {
+        if (!state.map) {
+            return;
+        }
+
+        if (!state.tomTom.fallbackLayer) {
+            state.tomTom.fallbackLayer = L.tileLayer(
                 "/api/map/tiles/dark/{z}/{x}/{y}.png",
                 {
                     maxZoom: 22,
                     tileSize: 256,
-                    attribution:
-                        "&copy; TomTom"
+                    attribution: "&copy; TomTom"
                 }
-            ).addTo(
-                state.map
             );
+        }
+
+        if (!state.tomTom.fallbackLayer._map) {
+            state.tomTom.fallbackLayer.addTo(state.map);
+        }
     }
 
-    function installTomTomBackground() {
+    function removeTomTomFallback() {
         if (
-            !state.map ||
-            !window.L
+            state.tomTom.fallbackLayer &&
+            state.tomTom.fallbackLayer._map
         ) {
-            return;
+            state.tomTom.fallbackLayer.remove();
         }
+    }
 
-        const mapElement =
-            $("navMap");
 
-        if (!mapElement) {
-            return;
-        }
-
-        /*
-         * MapLibre renderuje background.
-         *
-         * Leaflet ostaje iznad njega i služi za:
-         * - route polyline
-         * - markers
-         * - GPS
-         * - klik
-         * - fitBounds
-         */
-        const host =
-            document.createElement(
-                "div"
+    function normalizeTomTomCustomStyle(style) {
+        if (!style || typeof style !== "object") {
+            throw new Error(
+                "TomTom custom style nije validan JSON objekat."
             );
-
-        host.id =
-            "navTomTomMap";
-
-        host.style.position =
-            "absolute";
-
-        host.style.inset =
-            "0";
-
-        host.style.zIndex =
-            "0";
-
-        host.style.width =
-            "100%";
-
-        host.style.height =
-            "100%";
-
-        host.style.pointerEvents =
-            "none";
-
-        host.style.overflow =
-            "hidden";
-
-        mapElement.prepend(
-            host
-        );
-
-        state.tomTomHost =
-            host;
-
-        /*
-         * Sakrij Leaflet base tile pane.
-         * Route/overlay pane-ovi ostaju aktivni.
-         */
-        const tilePane =
-            mapElement.querySelector(
-                ".leaflet-tile-pane"
-            );
-
-        if (tilePane) {
-            tilePane.style.display =
-                "none";
         }
 
-        /*
-         * URL iz backend konfiguracije.
-         */
-        const styleUrlPromise =
-            fetch(
-                "/api/map/config",
+        style.glyphs = TOMTOM_GLYPHS_TEMPLATE;
+
+        return style;
+    }
+
+
+    async function loadTomTomCustomStyle(mapElement) {
+        if (
+            state.tomTom.ready &&
+            state.tomTom.map
+        ) {
+            return state.tomTom.map;
+        }
+
+        if (state.tomTom.loading) {
+            return state.tomTom.loading;
+        }
+
+        state.tomTom.loading = (async () => {
+
+            const maplibregl = await loadMapLibre();
+            const host = prepareTomTomHost(mapElement);
+
+            const response = await fetch(TOMTOM_LOCAL_STYLE,
                 {
+                    method: "GET",
                     headers: {
                         Accept:
                             "application/json"
-                    }
-                }
-            )
-                .then(
-                    (response) => {
-                        if (
-                            !response.ok
-                        ) {
-                            throw new Error(
-                                `Map config HTTP ${response.status}`
-                            );
-                        }
-
-                        return response.json();
-                    }
-                )
-                .then(
-                    (config) =>
-                        config?.customStyleUrl ||
-                        TOMTOM_STYLE_FALLBACK
-                )
-                .catch(
-                    () =>
-                        TOMTOM_STYLE_FALLBACK
-                );
-
-        loadMapLibre()
-            .then(
-                (maplibregl) =>
-                    styleUrlPromise.then(
-                        (
-                            styleUrl
-                        ) => {
-
-                            state.tomTomMap =
-                                new maplibregl.Map(
-                                    {
-                                        container:
-                                            host,
-
-                                        style:
-                                            styleUrl,
-
-                                        center:
-                                            [
-                                                20.4633,
-                                                44.8176
-                                            ],
-
-                                        zoom:
-                                            8,
-
-                                        attributionControl:
-                                            false,
-
-                                        interactive:
-                                            false,
-
-                                        dragPan:
-                                            false,
-
-                                        scrollZoom:
-                                            false,
-
-                                        boxZoom:
-                                            false,
-
-                                        doubleClickZoom:
-                                            false,
-
-                                        dragRotate:
-                                            false,
-
-                                        keyboard:
-                                            false,
-
-                                        touchZoomRotate:
-                                            false,
-
-                                        transformRequest:
-                                            (
-                                                url
-                                            ) => ({
-                                                url:
-                                                    proxyTomTomUrl(
-                                                        url
-                                                    )
-                                            })
-                                    }
-                                );
-
-                            state.tomTomMap.on(
-                                "load",
-                                () => {
-                                    syncTomTomBackground();
-
-                                    state
-                                        .tomTomMap
-                                        .resize();
-
-                                    console.log(
-                                        "[ProMap Navigation] TomTom custom style loaded."
-                                    );
-                                }
-                            );
-
-                            state.tomTomMap.on(
-                                "error",
-                                (
-                                    event
-                                ) => {
-                                    console.error(
-                                        "[ProMap Navigation] TomTom custom style error:",
-                                        event
-                                    );
-
-                                    activateTomTomRasterFallback();
-                                }
-                            );
-                        }
-                    )
-            )
-            .catch(
-                (error) => {
-                    console.error(
-                        "[ProMap Navigation] MapLibre load error:",
-                        error
-                    );
-
-                    activateTomTomRasterFallback();
+                    },
+                    cache: "no-store"
                 }
             );
+
+            if (!response.ok) {
+                throw new Error(
+                    `TomTom local style HTTP ${response.status}`
+                );
+            }
+
+            let style =
+                await response.json();
+
+            if (
+                !style ||
+                Number(style.version) !== 8 ||
+                !Array.isArray(style.layers)
+            ) {
+                throw new Error(
+                    "street_driving_dark_orbis_draft.json nije validan MapLibre Style JSON."
+                );
+            }
+
+            style = normalizeTomTomCustomStyle(style);
+
+            console.log("[ProMap Navigation] " + "TomTom custom style normalized:",
+                {
+                    glyphs: style.glyphs,
+                    sprite: style.sprite || null,
+                    sources: style.sources ? Object.keys(style.sources) : [],
+                    layers: style.layers.length
+                }
+            );
+
+            /*
+             * ========================================================
+             * MAPLIBRE MAP
+             * ========================================================
+             */
+            const map =
+                new maplibregl.Map({
+                    container:
+                        host,
+
+                    style:
+                        style,
+
+                    center: [
+                        DEFAULTS
+                            .start
+                            .longitude,
+
+                        DEFAULTS
+                            .start
+                            .latitude
+                    ],
+
+                    zoom: 8,
+
+                    attributionControl:
+                        true,
+
+                    interactive:
+                        false,
+
+                    dragPan:
+                        false,
+
+                    scrollZoom:
+                        false,
+
+                    boxZoom:
+                        false,
+
+                    doubleClickZoom:
+                        false,
+
+                    dragRotate:
+                        false,
+
+                    keyboard:
+                        false,
+
+                    touchZoomRotate:
+                        false,
+
+                    preserveDrawingBuffer:
+                        false,
+
+                    /*
+                     * Ako lokalni style JSON
+                     * sadrži TomTom URL-ove,
+                     * prebaci ih kroz naš backend.
+                     */
+                    transformRequest:
+                        (url) => ({
+                            url:
+                                tomTomResourceTransform(
+                                    url
+                                )
+                        })
+                });
+
+            state.tomTom.map =
+                map;
+
+            /*
+             * ========================================================
+             * LOAD EVENT
+             * ========================================================
+             */
+            await new Promise(
+                (
+                    resolve,
+                    reject
+                ) => {
+                    let completed =
+                        false;
+
+                    const timer =
+                        window.setTimeout(
+                            () => {
+                                if (
+                                    completed
+                                ) {
+                                    return;
+                                }
+
+                                completed =
+                                    true;
+
+                                reject(
+                                    new Error(
+                                        "TomTom Dark lokalni style timeout."
+                                    )
+                                );
+                            },
+                            15000
+                        );
+
+                    map.once(
+                        "load",
+                        () => {
+                            if (
+                                completed
+                            ) {
+                                return;
+                            }
+
+                            completed =
+                                true;
+
+                            window.clearTimeout(
+                                timer
+                            );
+
+                            resolve();
+                        }
+                    );
+
+                    map.on(
+                        "error",
+                        (event) => {
+                            const error =
+                                event?.error ||
+                                event;
+
+                            state.tomTom
+                                .lastError =
+                                error;
+
+                            console.error(
+                                "[ProMap Navigation] " +
+                                "TomTom resource error:",
+                                error
+                            );
+                        }
+                    );
+                }
+            );
+
+            /*
+             * ========================================================
+             * READY
+             * ========================================================
+             */
+            state.tomTom.ready =
+                true;
+
+            state.tomTom.failed =
+                false;
+
+            syncTomTomBackground();
+
+            setTomTomHostVisible(
+                true
+            );
+
+            setText(
+                "engineFooter",
+                "TomTom Dark · Map Maker Draft"
+            );
+
+            console.log(
+                "[ProMap Navigation] " +
+                "TOMTOM DARK MAP LOADED FROM LOCAL STYLE JSON"
+            );
+
+            return map;
+        })();
+
+        try {
+            return await state.tomTom.loading;
+        }
+        catch (error) {
+            state.tomTom.failed =
+                true;
+
+            state.tomTom.lastError =
+                error;
+
+            console.error(
+                "[ProMap Navigation] " +
+                "TomTom lokalni Dark style nije učitan:",
+                error
+            );
+
+            setTomTomHostVisible(
+                false
+            );
+
+            setText(
+                "engineFooter",
+                "TomTom Dark Style ERROR"
+            );
+
+            showError(
+                "Nije moguće učitati /styles/street_driving_dark_orbis_draft.json."
+            );
+
+            return null;
+        }
+        finally {
+            state.tomTom.loading =
+                null;
+        }
+    }
+
+
+    async function activateTomTomBase(
+        mapElement
+    ) {
+        setTomTomHostVisible(
+            false
+        );
+
+        removeTomTomFallback();
+
+        const customMap =
+            await loadTomTomCustomStyle(
+                mapElement
+            );
+
+        if (!customMap) {
+            return;
+        }
+
+        setTomTomHostVisible(
+            true
+        );
+
+        syncTomTomBackground();
+
+        try {
+            customMap.resize();
+        }
+        catch {
+            // ignore
+        }
+    }
+
+
+    function deactivateTomTomBase() {
+        setTomTomHostVisible(false);
+        removeTomTomFallback();
     }
 
     // ============================================================
@@ -1221,22 +978,15 @@ window.ProMap = window.ProMap || {};
     // ============================================================
 
     function initializeMap() {
-        const mapElement =
-            $("navMap");
+        const mapElement = $("navMap");
 
         if (!mapElement) {
-            console.error(
-                "[ProMap Navigation] #navMap nije pronađen."
-            );
-
+            console.error("[ProMap Navigation] #navMap nije pronađen u DOM-u.");
             return;
         }
 
         if (!window.L) {
-            console.error(
-                "[ProMap Navigation] Leaflet nije učitan."
-            );
-
+            console.error("[ProMap Navigation] Leaflet nije učitan.");
             return;
         }
 
@@ -1245,223 +995,144 @@ window.ProMap = window.ProMap || {};
             return;
         }
 
-        state.map =
-            L.map(
-                mapElement,
-                {
-                    zoomControl:
-                        true,
+        state.map = L.map(mapElement, {
+            zoomControl: true,
+            preferCanvas: true,
+            maxZoom: 22
+        }).setView([44.8176, 20.4633], 8);
 
-                    preferCanvas:
-                        true
-                }
-            ).setView(
-                [
-                    44.8176,
-                    20.4633
-                ],
-                8
-            );
+        mapElement.style.position = mapElement.style.position || "relative";
+        mapElement.style.overflow = "hidden";
+        mapElement.style.background = "#0b3b31";
 
-        if (
-            state.map.attributionControl
-        ) {
-            state.map
-                .attributionControl
-                .addAttribution(
-                    "&copy; TomTom"
-                );
-        }
+        const tomTomCustomLayer = L.layerGroup();
+        state.tomTom.layer = tomTomCustomLayer;
 
-        /*
-         * Traffic overlays i dalje idu preko Leaflet-a.
-         */
-        const trafficFlowLayer =
-            L.tileLayer(
-                "/api/map/tiles/flow/{z}/{x}/{y}.png",
-                {
-                    maxZoom:
-                        22,
-
-                    tileSize:
-                        256,
-
-                    opacity:
-                        0.85,
-
-                    attribution:
-                        "&copy; TomTom Traffic"
-                }
-            );
-
-        const trafficIncidentsLayer =
-            L.tileLayer(
-                "/api/map/tiles/incidents/{z}/{x}/{y}.png",
-                {
-                    maxZoom:
-                        22,
-
-                    tileSize:
-                        256,
-
-                    opacity:
-                        0.95,
-
-                    attribution:
-                        "&copy; TomTom Traffic"
-                }
-            );
-
-        L.control.layers(
-            null,
+        const osmLayer = L.tileLayer(
+            "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
             {
-                "Traffic Flow":
-                    trafficFlowLayer,
+                maxZoom: 19,
+                attribution: "&copy; OpenStreetMap contributors"
+            }
+        );
 
-                "Traffic Incidents":
-                    trafficIncidentsLayer
-            },
+        const satelliteLayer = L.tileLayer(
+            "/api/map/tiles/satellite/{z}/{x}/{y}.png",
             {
-                collapsed:
-                    false,
-
-                position:
-                    "topright"
-            }
-        ).addTo(
-            state.map
-        );
-
-        state.map.on(
-            "move",
-            syncTomTomBackground
-        );
-
-        state.map.on(
-            "zoom",
-            syncTomTomBackground
-        );
-
-        state.map.on(
-            "resize",
-            syncTomTomBackground
-        );
-
-        state.map.on(
-            "dragstart",
-            () => {
-                if (
-                    state.live
-                ) {
-                    state.liveFollow =
-                        false;
-                }
+                maxZoom: 22,
+                tileSize: 256,
+                attribution: "&copy; Esri World Imagery"
             }
         );
 
-        state.map.on(
-            "click",
-            (event) => {
-                if (
-                    !state.picking
-                ) {
-                    return;
-                }
-
-                const point = {
-                    latitude:
-                        event.latlng.lat,
-
-                    longitude:
-                        event.latlng.lng,
-
-                    label:
-                        `${event.latlng.lat.toFixed(6)}, ${event.latlng.lng.toFixed(6)}`
-                };
-
-                if (
-                    state.picking ===
-                    "start"
-                ) {
-                    const input =
-                        $("navStart");
-
-                    if (input) {
-                        input.value =
-                            point.label;
-                    }
-
-                    setStart(
-                        point
-                    );
-                }
-                else {
-                    const input =
-                        $("navEnd");
-
-                    if (input) {
-                        input.value =
-                            point.label;
-                    }
-
-                    setDestination(
-                        point
-                    );
-                }
-
-                state.picking =
-                    null;
-
-                state.map
-                    .getContainer()
-                    .style.cursor =
-                    "";
-
-                showError("");
+        const trafficFlowLayer = L.tileLayer(
+            "/api/map/tiles/flow/{z}/{x}/{y}.png",
+            {
+                maxZoom: 22,
+                tileSize: 256,
+                opacity: 0.85,
+                attribution: "&copy; TomTom Traffic"
             }
         );
 
-        installTomTomBackground();
-
-        requestAnimationFrame(
-            () =>
-                state.map
-                    ?.invalidateSize()
+        const trafficIncidentsLayer = L.tileLayer(
+            "/api/map/tiles/incidents/{z}/{x}/{y}.png",
+            {
+                maxZoom: 22,
+                tileSize: 256,
+                opacity: 0.95,
+                attribution: "&copy; TomTom Traffic"
+            }
         );
 
-        setTimeout(
-            () =>
-                state.map
-                    ?.invalidateSize(),
-            300
-        );
+        const baseLayers = {
+            "TomTom Dark · Custom": tomTomCustomLayer,
+            "OSM Light": osmLayer,
+            "Satellite": satelliteLayer
+        };
 
-        setTimeout(
-            () =>
-                state.map
-                    ?.invalidateSize(),
-            1000
-        );
+        const overlays = {
+            "Traffic Flow": trafficFlowLayer,
+            "Traffic Incidents": trafficIncidentsLayer
+        };
+
+        L.control.layers(baseLayers, overlays, {
+            collapsed: false,
+            position: "topright"
+        }).addTo(state.map);
+
+        tomTomCustomLayer.addTo(state.map);
+
+        state.map.on("baselayerchange", (event) => {
+            if (event.layer === tomTomCustomLayer) {
+                void activateTomTomBase(mapElement);
+            } else {
+                deactivateTomTomBase();
+            }
+        });
+
+        state.map.on("move", () => {
+            if (state.tomTom.visible) {
+                syncTomTomBackground();
+            }
+        });
+
+        state.map.on("zoom", () => {
+            if (state.tomTom.visible) {
+                syncTomTomBackground();
+            }
+        });
+
+        state.map.on("dragstart", () => {
+            if (state.live) {
+                state.liveFollow = false;
+            }
+        });
+
+        state.map.on("click", (event) => {
+            if (!state.picking) {
+                return;
+            }
+
+            const point = {
+                latitude: event.latlng.lat,
+                longitude: event.latlng.lng,
+                label:
+                    `${event.latlng.lat.toFixed(6)}, ${event.latlng.lng.toFixed(6)}`
+            };
+
+            if (state.picking === "start") {
+                $("navStart") &&
+                    ($("navStart").value = point.label);
+                setStart(point);
+            } else {
+                $("navEnd") &&
+                    ($("navEnd").value = point.label);
+                setDestination(point);
+            }
+
+            state.picking = null;
+            state.map.getContainer().style.cursor = "";
+            showError("");
+        });
+
+        requestAnimationFrame(() => state.map?.invalidateSize());
+        window.setTimeout(() => state.map?.invalidateSize(), 250);
+
+        void activateTomTomBase(mapElement);
     }
 
     // ============================================================
     // START / DESTINATION
     // ============================================================
 
-    function setStart(
-        point
-    ) {
-        const normalized =
-            normalizePoint(
-                point
-            );
-
+    function setStart(point) {
+        const normalized = normalizePoint(point);
         if (!normalized) {
             return false;
         }
 
-        state.start =
-            normalized;
+        state.start = normalized;
 
         setText(
             "navStartResolved",
@@ -1469,70 +1140,31 @@ window.ProMap = window.ProMap || {};
             `${normalized.latitude.toFixed(6)}, ${normalized.longitude.toFixed(6)}`
         );
 
-        if (!state.map) {
-            return true;
-        }
-
-        if (
-            state.startMarker
-        ) {
-            state.startMarker.remove();
-        }
-
-        state.startMarker =
-            L.circleMarker(
-                [
-                    normalized.latitude,
-                    normalized.longitude
-                ],
-                {
-                    radius:
-                        8,
-
-                    weight:
-                        3,
-
-                    fillOpacity:
-                        1
-                }
-            )
-                .addTo(
-                    state.map
-                )
-                .bindTooltip(
-                    "START",
-                    {
-                        direction:
-                            "top",
-
-                        offset:
-                            [
-                                0,
-                                -6
-                            ],
-
-                        opacity:
-                            0.95
-                    }
+        if (state.map) {
+            state.startMarker?.remove();
+            state.startMarker = L.marker([
+                normalized.latitude,
+                normalized.longitude
+            ])
+                .addTo(state.map)
+                .bindPopup(
+                    `<strong>START</strong><br>${escapeHtml(
+                        normalized.label ||
+                        `${normalized.latitude.toFixed(6)}, ${normalized.longitude.toFixed(6)}`
+                    )}`
                 );
+        }
 
         return true;
     }
 
-    function setDestination(
-        point
-    ) {
-        const normalized =
-            normalizePoint(
-                point
-            );
-
+    function setDestination(point) {
+        const normalized = normalizePoint(point);
         if (!normalized) {
             return false;
         }
 
-        state.destination =
-            normalized;
+        state.destination = normalized;
 
         setText(
             "navEndResolved",
@@ -1540,52 +1172,20 @@ window.ProMap = window.ProMap || {};
             `${normalized.latitude.toFixed(6)}, ${normalized.longitude.toFixed(6)}`
         );
 
-        if (!state.map) {
-            return true;
-        }
-
-        if (
-            state.destinationMarker
-        ) {
-            state.destinationMarker.remove();
-        }
-
-        state.destinationMarker =
-            L.circleMarker(
-                [
-                    normalized.latitude,
-                    normalized.longitude
-                ],
-                {
-                    radius:
-                        8,
-
-                    weight:
-                        3,
-
-                    fillOpacity:
-                        1
-                }
-            )
-                .addTo(
-                    state.map
-                )
-                .bindTooltip(
-                    "DESTINACIJA",
-                    {
-                        direction:
-                            "top",
-
-                        offset:
-                            [
-                                0,
-                                -6
-                            ],
-
-                        opacity:
-                            0.95
-                    }
+        if (state.map) {
+            state.destinationMarker?.remove();
+            state.destinationMarker = L.marker([
+                normalized.latitude,
+                normalized.longitude
+            ])
+                .addTo(state.map)
+                .bindPopup(
+                    `<strong>ODREDIŠTE</strong><br>${escapeHtml(
+                        normalized.label ||
+                        `${normalized.latitude.toFixed(6)}, ${normalized.longitude.toFixed(6)}`
+                    )}`
                 );
+        }
 
         return true;
     }
@@ -1594,469 +1194,223 @@ window.ProMap = window.ProMap || {};
     // GEOCODING
     // ============================================================
 
-    async function geocode(
-        query
-    ) {
-        const response =
-            await fetch(
-                `/api/geocode?q=${encodeURIComponent(query)}&limit=5`,
-                {
-                    headers: {
-                        Accept:
-                            "application/json"
-                    }
+    async function geocode(query) {
+        const response = await fetch(
+            `/api/geocode?q=${encodeURIComponent(query)}&limit=5`,
+            {
+                headers: {
+                    Accept: "application/json"
                 }
-            );
+            }
+        );
+
+        let payload = null;
+        try {
+            payload = await response.json();
+        } catch {
+            payload = null;
+        }
 
         if (!response.ok) {
             throw new Error(
-                `Geocoding HTTP ${response.status}`
+                payload?.message ||
+                `Geocoding API HTTP ${response.status}`
             );
         }
 
-        const data =
-            await response.json();
-
-        return Array.isArray(
-            data
-        )
-            ? data
-            : Array.isArray(
-                data?.results
-            )
-                ? data.results
-                : [];
+        return Array.isArray(payload) ? payload : [];
     }
 
-    function clearSuggestions(
-        target
-    ) {
-        const id =
+    function clearSuggestions(target) {
+        const box = $(
             target === "start"
                 ? "navStartSuggestions"
-                : "navEndSuggestions";
-
-        const box =
-            $(id);
+                : "navEndSuggestions"
+        );
 
         if (box) {
-            box.innerHTML =
-                "";
+            box.innerHTML = "";
         }
     }
 
-    function renderSuggestions(
-        target,
-        items
-    ) {
-        const box =
-            $(
-                target === "start"
-                    ? "navStartSuggestions"
-                    : "navEndSuggestions"
-            );
+    function renderSuggestions(target, items) {
+        const box = $(
+            target === "start"
+                ? "navStartSuggestions"
+                : "navEndSuggestions"
+        );
 
         if (!box) {
             return;
         }
 
-        box.innerHTML =
-            "";
+        box.innerHTML = "";
 
-        for (
-            const rawItem
-            of items.slice(0, 5)
-        ) {
-            const point =
-                normalizePoint(
-                    rawItem
-                );
-
+        for (const item of items.slice(0, 5)) {
+            const point = normalizePoint(item);
             if (!point) {
                 continue;
             }
 
-            const button =
-                document.createElement(
-                    "button"
-                );
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "nav-suggestion";
 
-            button.type =
-                "button";
-
-            button.className =
-                "nav-suggestion";
-
-            const label =
+            const display =
                 point.label ||
                 `${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`;
 
-            button.textContent =
-                label;
+            button.textContent = display;
 
-            button.addEventListener(
-                "click",
-                () => {
-                    if (
-                        target ===
-                        "start"
-                    ) {
-                        $("navStart").value =
-                            label;
-
-                        setStart({
-                            ...point,
-                            label
-                        });
-                    }
-                    else {
-                        $("navEnd").value =
-                            label;
-
-                        setDestination({
-                            ...point,
-                            label
-                        });
-                    }
-
-                    clearSuggestions(
-                        target
-                    );
-
-                    showError("");
+            button.addEventListener("click", () => {
+                if (target === "start") {
+                    $("navStart") && ($("navStart").value = display);
+                    setStart({ ...point, label: display });
+                } else {
+                    $("navEnd") && ($("navEnd").value = display);
+                    setDestination({ ...point, label: display });
                 }
-            );
 
-            box.appendChild(
-                button
-            );
+                clearSuggestions(target);
+                showError("");
+            });
+
+            box.appendChild(button);
         }
     }
 
-    function scheduleGeocode(
-        target
-    ) {
-        const input =
-            $(
-                target === "start"
-                    ? "navStart"
-                    : "navEnd"
-            );
-
+    function scheduleGeocode(target) {
+        const input = $(target === "start" ? "navStart" : "navEnd");
         if (!input) {
             return;
         }
 
-        clearTimeout(
-            state.geocodeTimers[
-            target
-            ]
-        );
+        clearTimeout(state.geocodeTimers[target]);
 
-        const value =
-            input.value.trim();
+        const value = input.value.trim();
 
-        if (
-            target ===
-            "start"
-        ) {
-            state.start =
-                null;
-
-            setText(
-                "navStartResolved",
-                "Nije još potvrđeno"
-            );
-        }
-        else {
-            state.destination =
-                null;
-
-            setText(
-                "navEndResolved",
-                "Nije još potvrđeno"
-            );
+        if (target === "start") {
+            state.start = null;
+            setText("navStartResolved", "Nije još potvrđeno");
+        } else {
+            state.destination = null;
+            setText("navEndResolved", "Nije još potvrđeno");
         }
 
-        const coordinates =
-            parseCoordinateText(
-                value
-            );
+        const coordinate = parseCoordinateText(value);
+        if (coordinate) {
+            const resolved = {
+                ...coordinate,
+                label:
+                    `${coordinate.latitude.toFixed(6)}, ${coordinate.longitude.toFixed(6)}`
+            };
 
-        if (
-            coordinates
-        ) {
-            const label =
-                `${coordinates.latitude.toFixed(6)}, ${coordinates.longitude.toFixed(6)}`;
+            target === "start"
+                ? setStart(resolved)
+                : setDestination(resolved);
 
-            if (
-                target ===
-                "start"
-            ) {
-                setStart({
-                    ...coordinates,
-                    label
-                });
-            }
-            else {
-                setDestination({
-                    ...coordinates,
-                    label
-                });
-            }
-
-            clearSuggestions(
-                target
-            );
-
+            clearSuggestions(target);
             return;
         }
 
-        if (
-            value.length < 2
-        ) {
-            clearSuggestions(
-                target
-            );
-
+        if (value.length < 2) {
+            clearSuggestions(target);
             return;
         }
 
-        state.geocodeTimers[
-            target
-        ] =
-            window.setTimeout(
-                async () => {
-                    try {
-                        renderSuggestions(
-                            target,
-                            await geocode(
-                                value
-                            )
-                        );
-                    }
-                    catch (
-                    error
-                    ) {
-                        console.warn(
-                            "[ProMap Navigation] Geocoding error:",
-                            error
-                        );
-                    }
-                },
-                300
-            );
+        state.geocodeTimers[target] = window.setTimeout(async () => {
+            try {
+                const items = await geocode(value);
+                renderSuggestions(target, items);
+            } catch (error) {
+                console.warn("[ProMap Navigation] Geocoding error:", error);
+            }
+        }, 300);
     }
 
-    async function resolveInput(
-        target
-    ) {
-        const input =
-            $(
-                target === "start"
-                    ? "navStart"
-                    : "navEnd"
-            );
-
+    async function resolveInput(target) {
+        const input = $(target === "start" ? "navStart" : "navEnd");
         if (!input) {
             return false;
         }
 
-        const value =
-            input.value.trim();
+        const value = input.value.trim();
+        const coordinate = parseCoordinateText(value);
 
-        const coordinate =
-            parseCoordinateText(
-                value
-            );
+        if (coordinate) {
+            const resolved = {
+                ...coordinate,
+                label:
+                    `${coordinate.latitude.toFixed(6)}, ${coordinate.longitude.toFixed(6)}`
+            };
 
-        if (
-            coordinate
-        ) {
-            const label =
-                `${coordinate.latitude.toFixed(6)}, ${coordinate.longitude.toFixed(6)}`;
-
-            return target ===
-                "start"
-                ? setStart({
-                    ...coordinate,
-                    label
-                })
-                : setDestination({
-                    ...coordinate,
-                    label
-                });
+            return target === "start"
+                ? setStart(resolved)
+                : setDestination(resolved);
         }
 
-        if (
-            value.length < 2
-        ) {
+        if (value.length < 2) {
             return false;
         }
 
-        const results =
-            await geocode(
-                value
-            );
-
-        const point =
-            normalizePoint(
-                results[0]
-            );
+        const items = await geocode(value);
+        const point = normalizePoint(items[0]);
 
         if (!point) {
             return false;
         }
 
-        const label =
+        const display =
             point.label ||
             `${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`;
 
-        input.value =
-            label;
+        input.value = display;
 
-        return target ===
-            "start"
-            ? setStart({
-                ...point,
-                label
-            })
-            : setDestination({
-                ...point,
-                label
-            });
+        return target === "start"
+            ? setStart({ ...point, label: display })
+            : setDestination({ ...point, label: display });
     }
 
     // ============================================================
-    // TRUCK
+    // TRUCK / REQUEST
     // ============================================================
 
     function truckFromForm() {
         return {
-            grossWeightT:
-                numberValue(
-                    "navWeight",
-                    40
-                ),
-
-            heightM:
-                numberValue(
-                    "navHeight",
-                    4
-                ),
-
-            widthM:
-                numberValue(
-                    "navWidth",
-                    2.55
-                ),
-
-            lengthM:
-                numberValue(
-                    "navLength",
-                    16.5
-                ),
-
-            axleLoadT:
-                numberValue(
-                    "navAxleLoad",
-                    10
-                ),
-
-            axles:
-                Math.max(
-                    1,
-                    Math.round(
-                        numberValue(
-                            "navAxles",
-                            5
-                        )
-                    )
-                ),
-
-            isHgv:
-                true,
-
-            commercial:
-                true,
-
-            hazmat:
-                $("navHazmat")
-                    ?.checked ??
-                false,
-
-            adrClass:
-                $("navAdrClass")
-                    ?.value
-                    ?.trim() ||
-                null,
-
-            vehicleClass:
-                "HeavyGoods",
-
-            maxSpeedKmh:
-                numberValue(
-                    "navMaxSpeed",
-                    90
-                )
+            grossWeightT: numberValue("navWeight", 40),
+            heightM: numberValue("navHeight", 4),
+            widthM: numberValue("navWidth", 2.55),
+            lengthM: numberValue("navLength", 16.5),
+            axleLoadT: numberValue("navAxleLoad", 10),
+            axles: Math.max(1, Math.round(numberValue("navAxles", 5))),
+            isHgv: true,
+            commercial: true,
+            hazmat: $("navHazmat")?.checked ?? false,
+            goods: null,
+            adrClass: $("navAdrClass")?.value?.trim() || null,
+            vehicleClass: "HeavyGoods",
+            maxSpeedKmh: numberValue("navMaxSpeed", 90)
         };
     }
 
     function validateTruck() {
-        if (
-            state.profile !==
-            "truck"
-        ) {
+        if (state.profile !== "truck") {
             return null;
         }
 
-        const fields = [
-            [
-                "navWeight",
-                "Masa"
-            ],
-            [
-                "navHeight",
-                "Visina"
-            ],
-            [
-                "navWidth",
-                "Širina"
-            ],
-            [
-                "navLength",
-                "Dužina"
-            ],
-            [
-                "navAxleLoad",
-                "Osovinsko opterećenje"
-            ],
-            [
-                "navAxles",
-                "Broj osovina"
-            ],
-            [
-                "navMaxSpeed",
-                "Maksimalna brzina"
-            ]
+        const checks = [
+            ["navWeight", "Masa"],
+            ["navHeight", "Visina"],
+            ["navWidth", "Širina"],
+            ["navLength", "Dužina"],
+            ["navAxleLoad", "Osovinsko opterećenje"],
+            ["navAxles", "Broj osovina"],
+            ["navMaxSpeed", "Maksimalna brzina"]
         ];
 
-        for (
-            const [id, label]
-            of fields
-        ) {
-            const value =
-                numberValue(
-                    id,
-                    NaN
-                );
-
-            if (
-                !Number.isFinite(
-                    value
-                ) ||
-                value <= 0
-            ) {
+        for (const [id, label] of checks) {
+            const value = numberValue(id, NaN);
+            if (!Number.isFinite(value) || value <= 0) {
                 return `${label} mora biti veća od 0.`;
             }
         }
@@ -2066,1416 +1420,896 @@ window.ProMap = window.ProMap || {};
 
     function requestState() {
         return {
-            start:
-                state.start,
-
-            destination:
-                state.destination,
-
-            profile:
-                state.profile,
-
-            avoidRestricted:
-                $("navAvoid")
-                    ?.checked ??
-                true,
-
-            departureAt:
-                new Date()
-                    .toISOString(),
-
+            start: state.start,
+            destination: state.destination,
+            profile: state.profile,
+            avoidRestricted: $("navAvoid")?.checked ?? true,
+            departureAt: new Date().toISOString(),
             truck:
-                state.profile ===
-                    "truck"
+                state.profile === "truck"
                     ? truckFromForm()
                     : null
         };
     }
 
     // ============================================================
-    // ROUTE STATE
+    // ROUTE RESULT / UI
     // ============================================================
 
     function clearRouteLayers() {
-        for (
-            const entry
-            of state.routeLayers
-        ) {
+        for (const entry of state.routeLayers) {
             try {
                 entry.layer.remove();
-            }
-            catch {
-                /* noop */
+            } catch {
+                // ignore
             }
         }
 
-        state.routeLayers =
-            [];
-
-        state.routeCoordinates =
-            [];
+        state.routeLayers = [];
+        state.routeCoordinates = [];
+        state.routeCumulativeDistances = [];
     }
 
     function clearRouteResult() {
         clearRouteLayers();
 
-        state.routeResponse =
-            null;
+        state.routeResponse = null;
+        state.selectedRouteIndex = 0;
+        state.maneuvers = [];
+        state.maneuverIndex = 0;
+        state.routeProgressMeters = 0;
 
-        state.selectedRouteIndex =
-            0;
-
-        state.maneuvers =
-            [];
-
-        state.maneuverIndex =
-            0;
-
+        setText("summaryDistance", "—");
+        setText("summaryDuration", "—");
+        setText("summaryEta", "—");
+        setText("summarySafety", "READY");
+        setText("summaryDiagnostics", "—");
+        setText("mapDistance", "—");
+        setText("mapDuration", "—");
+        setText("mapEta", "—");
         setText(
-            "summaryDistance",
-            "—"
+            "routeSafeBadge",
+            state.profile === "truck" ? "TRUCK SAFE" : "CAR ROUTE"
         );
 
-        setText(
-            "summaryDuration",
-            "—"
-        );
+        setText("nextInstructionIcon", "↑");
+        setText("nextInstructionText", "—");
+        setText("nextInstructionDistance", "—");
 
-        setText(
-            "summaryEta",
-            "—"
-        );
+        setText("alternativeCount", "0");
+        setText("warningCount", "0");
+        setText("maneuverCount", "0");
 
-        setText(
-            "summarySafety",
-            "READY"
-        );
+        if ($("routeAlternatives")) $("routeAlternatives").innerHTML = "";
+        if ($("routeWarnings")) $("routeWarnings").innerHTML = "";
+        if ($("maneuverList")) $("maneuverList").innerHTML = "";
 
-        setText(
-            "summaryDiagnostics",
-            "—"
-        );
+        setHidden("mapRouteCard", true);
+        setHidden("nextInstruction", true);
+        setHidden("alternativesCard", true);
+        setHidden("warningsCard", true);
+        setHidden("maneuversCard", true);
 
-        setText(
-            "mapDistance",
-            "—"
-        );
-
-        setText(
-            "mapDuration",
-            "—"
-        );
-
-        setText(
-            "mapEta",
-            "—"
-        );
-
-        setText(
-            "summaryEngine",
-            "—"
-        );
-
-        setText(
-            "diagnosticEngine",
-            "—"
-        );
-
-        setText(
-            "diagnosticGraph",
-            "—"
-        );
-
-        setText(
-            "diagnosticStates",
-            "—"
-        );
-
-        setText(
-            "diagnosticFallback",
-            "—"
-        );
-
-        setText(
-            "nextInstructionIcon",
-            "↑"
-        );
-
-        setText(
-            "nextInstructionText",
-            "—"
-        );
-
-        setText(
-            "nextInstructionDistance",
-            "—"
-        );
-
-        setText(
-            "alternativeCount",
-            "0"
-        );
-
-        setText(
-            "warningCount",
-            "0"
-        );
-
-        setText(
-            "maneuverCount",
-            "0"
-        );
-
-        if (
-            $("routeAlternatives")
-        ) {
-            $("routeAlternatives")
-                .innerHTML = "";
-        }
-
-        if (
-            $("routeWarnings")
-        ) {
-            $("routeWarnings")
-                .innerHTML = "";
-        }
-
-        if (
-            $("maneuverList")
-        ) {
-            $("maneuverList")
-                .innerHTML = "";
-        }
-
-        setHidden(
-            "mapRouteCard",
-            true
-        );
-
-        setHidden(
-            "nextInstruction",
-            true
-        );
-
-        setHidden(
-            "alternativesCard",
-            true
-        );
-
-        setHidden(
-            "warningsCard",
-            true
-        );
-
-        setHidden(
-            "maneuversCard",
-            true
-        );
+        setText("diagnosticEngine", "—");
+        setText("diagnosticGraph", "—");
+        setText("diagnosticStates", "—");
+        setText("diagnosticFallback", "—");
 
         showError("");
     }
 
-    function routeViolations(
-        route
-    ) {
-        return Array.isArray(
-            route?.analysis?.violations
-        )
-            ? route.analysis.violations
-            : [];
+    function selectedRoute() {
+        const routes = state.routeResponse?.routes;
+        if (!Array.isArray(routes) || routes.length === 0) {
+            return null;
+        }
+
+        return routes[state.selectedRouteIndex] || routes[0];
+    }
+
+    function routeViolations(route) {
+        if (Array.isArray(route?.analysis?.violations)) {
+            return route.analysis.violations;
+        }
+
+        if (Array.isArray(state.routeResponse?.violations)) {
+            return state.routeResponse.violations;
+        }
+
+        return [];
     }
 
     function updateRouteLayerStyles() {
-        for (
-            const entry
-            of state.routeLayers
-        ) {
-            entry.layer.setStyle({
-                weight:
-                    entry.index ===
-                        state.selectedRouteIndex
-                        ? 7
-                        : 4,
+        for (const entry of state.routeLayers) {
+            const active = entry.index === state.selectedRouteIndex;
 
-                opacity:
-                    entry.index ===
-                        state.selectedRouteIndex
-                        ? 0.95
-                        : 0.35
+            entry.layer.setStyle({
+                weight: active ? 7 : 4,
+                opacity: active ? 0.96 : 0.36
             });
 
-            if (
-                entry.index ===
-                state.selectedRouteIndex
-            ) {
+            if (active) {
                 entry.layer.bringToFront();
             }
         }
     }
 
-    // ============================================================
-    // ALTERNATIVES
-    // ============================================================
-
-    function renderAlternatives(
-        routes
-    ) {
-        const card =
-            $("alternativesCard");
-
-        const box =
-            $("routeAlternatives");
-
-        if (
-            !card ||
-            !box
-        ) {
+    function renderWarnings(violations) {
+        const box = $("routeWarnings");
+        if (!box) {
             return;
         }
 
-        box.innerHTML =
-            "";
+        const items = Array.isArray(violations) ? violations : [];
+        box.innerHTML = "";
 
-        const alternatives =
-            routes
-                .map(
-                    (
-                        route,
-                        index
-                    ) => ({
-                        route,
-                        index
-                    })
-                )
-                .filter(
-                    ({ index }) =>
-                        index !==
-                        state.selectedRouteIndex
-                );
-
-        setText(
-            "alternativeCount",
-            alternatives.length
-        );
-
-        if (
-            !alternatives.length
-        ) {
-            card.hidden =
-                true;
-
-            return;
-        }
-
-        card.hidden =
-            false;
-
-        for (
-            const {
-                route,
-                index
-            }
-            of alternatives
-        ) {
-            const button =
-                document.createElement(
-                    "button"
-                );
-
-            button.type =
-                "button";
-
-            button.className =
-                "nav-alternative";
-
-            button.innerHTML = `
-                <strong>Ruta ${index + 1}</strong>
-                <span>${escapeHtml(formatDistance(route?.distance))} · ${escapeHtml(formatDuration(route?.duration))}</span>
-                <small>Score: ${escapeHtml(route?.analysis?.score ?? "—")}</small>
+        for (const item of items) {
+            const row = document.createElement("div");
+            row.className = "nav-list-item";
+            row.innerHTML = `
+                <span>${escapeHtml(item.type || "Restriction")}</span>
+                <strong>${escapeHtml(item.name || item.id || "Ograničenje")}</strong>
+                <small>${escapeHtml(item.reason || "Aktivno ograničenje na izabranoj ruti.")}</small>
             `;
-
-            button.addEventListener(
-                "click",
-                () =>
-                    selectRoute(
-                        index,
-                        true
-                    )
-            );
-
-            box.appendChild(
-                button
-            );
-        }
-    }
-
-    // ============================================================
-    // WARNINGS
-    // ============================================================
-
-    function renderWarnings(
-        route,
-        response
-    ) {
-        const card =
-            $("warningsCard");
-
-        const box =
-            $("routeWarnings");
-
-        if (
-            !card ||
-            !box
-        ) {
-            return;
+            box.appendChild(row);
         }
 
-        box.innerHTML =
-            "";
-
-        const violations = [
-            ...routeViolations(
-                route
-            ),
-
-            ...(
-                Array.isArray(
-                    response?.violations
-                )
-                    ? response.violations
-                    : []
-            )
-        ];
-
-        const unique = [];
-        const seen = new Set();
-
-        for (
-            const item
-            of violations
-        ) {
-            const key =
-                `${item?.id || ""}|${item?.name || ""}|${item?.reason || ""}`;
-
-            if (
-                seen.has(
-                    key
-                )
-            ) {
-                continue;
-            }
-
-            seen.add(
-                key
-            );
-
-            unique.push(
-                item
-            );
-        }
-
-        setText(
-            "warningCount",
-            unique.length
-        );
-
-        if (
-            !unique.length
-        ) {
-            card.hidden =
-                true;
-
-            return;
-        }
-
-        card.hidden =
-            false;
-
-        unique.forEach(
-            (item) => {
-                const row =
-                    document.createElement(
-                        "div"
-                    );
-
-                row.className =
-                    "nav-warning";
-
-                row.innerHTML = `
-                    <strong>${escapeHtml(item?.name || item?.type || "Restrikcija")}</strong>
-                    <span>${escapeHtml(item?.reason || "Ruta sadrži upozorenje.")}</span>
-                `;
-
-                box.appendChild(
-                    row
-                );
-            }
-        );
+        setText("warningCount", String(items.length));
+        setHidden("warningsCard", items.length === 0);
     }
 
     // ============================================================
     // MANEUVERS
     // ============================================================
 
-    function renderManeuvers(
-        response
-    ) {
-        const card =
-            $("maneuversCard");
+    function maneuverIcon(type, modifier) {
+        const t = String(type || "").toLowerCase();
+        const m = String(modifier || "").toLowerCase();
 
-        const box =
-            $("maneuverList");
+        if (t === "arrive") return "●";
+        if (t === "depart") return "↑";
+        if (t === "roundabout" || t === "rotary") return "⟳";
+        if (m.includes("uturn")) return "↶";
+        if (m.includes("sharp left")) return "↙";
+        if (m === "left") return "↰";
+        if (m.includes("slight left")) return "↖";
+        if (m.includes("sharp right")) return "↘";
+        if (m === "right") return "↱";
+        if (m.includes("slight right")) return "↗";
+        return "↑";
+    }
 
-        if (
-            !card ||
-            !box
-        ) {
-            return;
+    function buildManeuverInstruction(type, modifier, roadName, roundaboutExit) {
+        const t = String(type || "continue").toLowerCase();
+        const m = String(modifier || "").toLowerCase();
+        const road = roadName ? ` na ${roadName}` : "";
+
+        if (t === "arrive") return "Stigli ste na odredište";
+        if (t === "depart") return roadName ? `Krenite na ${roadName}` : "Krenite pravo";
+        if (t === "roundabout" || t === "rotary") {
+            return roundaboutExit
+                ? `Uđite u kružni tok i izađite na ${roundaboutExit}. izlazu${road}`
+                : `Uđite u kružni tok${road}`;
+        }
+        if (m.includes("uturn")) return `Polukružno okretanje${road}`;
+        if (m.includes("sharp left")) return `Oštro levo${road}`;
+        if (m === "left") return `Skrenite levo${road}`;
+        if (m.includes("slight left")) return `Blago levo${road}`;
+        if (m.includes("sharp right")) return `Oštro desno${road}`;
+        if (m === "right") return `Skrenite desno${road}`;
+        if (m.includes("slight right")) return `Blago desno${road}`;
+        return roadName ? `Nastavite pravo na ${roadName}` : "Nastavite pravo";
+    }
+
+    function normalizeManeuver(item) {
+        if (!item) {
+            return null;
         }
 
-        const source =
-            Array.isArray(
-                response?.maneuvers
-            )
-                ? response.maneuvers
-                : [];
+        const type = item.type || item.maneuver?.type || "continue";
+        const modifier = item.modifier || item.maneuver?.modifier || null;
+        const roadName = item.roadName || item.name || null;
+        const roundaboutExit = item.roundaboutExit ?? item.maneuver?.exit ?? null;
 
-        state.maneuvers =
-            source.map(
-                (item) =>
-                    window.ProMap.Maneuvers
-                        ?.normalize
-                        ? window.ProMap.Maneuvers
-                            .normalize(
-                                item
-                            )
-                        : item
-            );
-
-        box.innerHTML =
-            "";
-
-        setText(
-            "maneuverCount",
-            state.maneuvers.length
+        const distanceMeters = Number(
+            item.distanceMeters ??
+            item.distanceFromPreviousMeters ??
+            item.distance ??
+            0
         );
 
-        if (
-            !state.maneuvers.length
-        ) {
-            card.hidden =
-                true;
+        const distanceFromRouteStartMeters = Number(
+            item.distanceFromRouteStartMeters ??
+            item.routeDistanceMeters ??
+            0
+        );
 
-            return;
+        const latitude = Number(item.latitude ?? item.maneuver?.latitude);
+        const longitude = Number(item.longitude ?? item.maneuver?.longitude);
+
+        const prepared = {
+            ...item,
+            type,
+            modifier,
+            roadName,
+            roundaboutExit,
+            distanceMeters: Number.isFinite(distanceMeters) ? distanceMeters : 0,
+            distanceFromRouteStartMeters:
+                Number.isFinite(distanceFromRouteStartMeters)
+                    ? distanceFromRouteStartMeters
+                    : 0,
+            latitude: Number.isFinite(latitude) ? latitude : null,
+            longitude: Number.isFinite(longitude) ? longitude : null,
+            icon: item.icon || maneuverIcon(type, modifier),
+            instruction:
+                item.instruction ||
+                buildManeuverInstruction(
+                    type,
+                    modifier,
+                    roadName,
+                    roundaboutExit
+                )
+        };
+
+        if (window.ProMap.Maneuvers?.normalize) {
+            const normalized = window.ProMap.Maneuvers.normalize(prepared);
+            return {
+                ...prepared,
+                ...normalized,
+                icon: normalized?.icon || prepared.icon,
+                instruction: normalized?.instruction || prepared.instruction
+            };
         }
 
-        card.hidden =
-            false;
+        return prepared;
+    }
 
-        state.maneuvers.forEach(
-            (
-                maneuver,
-                index
-            ) => {
-                const row =
-                    document.createElement(
-                        "button"
-                    );
+    function extractLegManeuvers(legs) {
+        const result = [];
+        if (!Array.isArray(legs)) {
+            return result;
+        }
 
-                row.type =
-                    "button";
+        let cumulativeDistance = 0;
 
-                row.className =
-                    "nav-maneuver";
+        for (const leg of legs) {
+            const steps = Array.isArray(leg?.steps) ? leg.steps : [];
 
-                row.innerHTML = `
-                    <span class="nav-maneuver-icon">${escapeHtml(maneuver.icon || "↑")}</span>
-                    <span>
-                        <strong>${escapeHtml(maneuver.instruction || "Nastavi pravo")}</strong>
-                        <small>${escapeHtml(formatDistance(maneuver.distanceMeters))}</small>
-                    </span>
-                `;
+            for (const step of steps) {
+                const maneuver = step?.maneuver || {};
+                const location = Array.isArray(maneuver.location)
+                    ? maneuver.location
+                    : Array.isArray(step?.location)
+                        ? step.location
+                        : null;
 
-                row.addEventListener(
-                    "click",
-                    () => {
-                        const lat =
-                            Number(
-                                maneuver.latitude
-                            );
+                const distance = Number(step?.distance);
+                const distanceMeters = Number.isFinite(distance) ? distance : 0;
 
-                        const lon =
-                            Number(
-                                maneuver.longitude
-                            );
+                const latitude =
+                    location && Number.isFinite(Number(location[1]))
+                        ? Number(location[1])
+                        : null;
+                const longitude =
+                    location && Number.isFinite(Number(location[0]))
+                        ? Number(location[0])
+                        : null;
 
-                        if (
-                            state.map &&
-                            Number.isFinite(
-                                lat
-                            ) &&
-                            Number.isFinite(
-                                lon
-                            )
-                        ) {
-                            state.map.setView(
-                                [
-                                    lat,
-                                    lon
-                                ],
-                                Math.max(
-                                    state.map.getZoom(),
-                                    16
-                                )
-                            );
-                        }
-
-                        state.maneuverIndex =
-                            index;
-
-                        updateNextInstruction();
-                    }
+                result.push(
+                    normalizeManeuver({
+                        type: maneuver.type || "continue",
+                        modifier: maneuver.modifier || null,
+                        instruction: step.instruction || null,
+                        distanceMeters,
+                        distanceFromRouteStartMeters: cumulativeDistance,
+                        latitude,
+                        longitude,
+                        roadName: step.name || null,
+                        roadRef: step.ref || null,
+                        roundaboutExit: maneuver.exit ?? null
+                    })
                 );
 
-                box.appendChild(
-                    row
-                );
+                cumulativeDistance += distanceMeters;
             }
-        );
+        }
+
+        return result.filter(Boolean);
     }
 
-    function updateNextInstruction() {
-        if (
-            !state.maneuvers.length
-        ) {
-            setHidden(
-                "nextInstruction",
-                true
-            );
+    function buildRouteCumulativeDistances() {
+        const coordinates = state.routeCoordinates;
+        state.routeCumulativeDistances = [];
 
+        if (!coordinates.length) {
             return;
         }
 
-        const index =
-            Math.min(
-                Math.max(
-                    state.maneuverIndex,
-                    0
-                ),
-                state.maneuvers.length -
-                1
+        state.routeCumulativeDistances = new Array(coordinates.length).fill(0);
+
+        for (let i = 1; i < coordinates.length; i++) {
+            state.routeCumulativeDistances[i] =
+                state.routeCumulativeDistances[i - 1] +
+                haversineMeters(
+                    coordinates[i - 1][0],
+                    coordinates[i - 1][1],
+                    coordinates[i][0],
+                    coordinates[i][1]
+                );
+        }
+    }
+
+    function routeProgressFromPosition(position) {
+        if (!position || state.routeCoordinates.length < 2) {
+            return null;
+        }
+
+        const latitude = Number(position.latitude);
+        const longitude = Number(position.longitude);
+
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+            return null;
+        }
+
+        let bestDistance = Infinity;
+        let bestProgress = 0;
+
+        for (let i = 0; i < state.routeCoordinates.length; i++) {
+            const point = state.routeCoordinates[i];
+            const distance = haversineMeters(
+                latitude,
+                longitude,
+                point[0],
+                point[1]
             );
 
-        const maneuver =
-            state.maneuvers[
-            index
-            ];
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestProgress = state.routeCumulativeDistances[i] ?? 0;
+            }
+        }
 
-        setHidden(
-            "nextInstruction",
-            false
-        );
+        state.routeProgressMeters = bestProgress;
+        return bestProgress;
+    }
 
-        setText(
-            "nextInstructionIcon",
-            maneuver.icon ||
-            "↑"
-        );
+    function getNextManeuver(position = getCurrentGpsPosition()) {
+        if (!state.maneuvers.length) {
+            return null;
+        }
 
-        setText(
-            "nextInstructionText",
-            maneuver.instruction ||
-            "Nastavi pravo"
-        );
+        if (!position) {
+            return (
+                state.maneuvers.find((item) => item.type !== "depart") ||
+                state.maneuvers[0]
+            );
+        }
 
-        setText(
-            "nextInstructionDistance",
-            formatDistance(
-                maneuver.distanceMeters
-            )
+        const progress = routeProgressFromPosition(position);
+
+        if (progress == null) {
+            return state.maneuvers[state.maneuverIndex] || state.maneuvers[0];
+        }
+
+        const passedTolerance = 18;
+
+        while (
+            state.maneuverIndex < state.maneuvers.length - 1 &&
+            Number(state.maneuvers[state.maneuverIndex].distanceFromRouteStartMeters || 0) <
+            progress - passedTolerance
+        ) {
+            state.maneuverIndex++;
+        }
+
+        while (
+            state.maneuverIndex < state.maneuvers.length - 1 &&
+            state.maneuvers[state.maneuverIndex].type === "depart"
+        ) {
+            state.maneuverIndex++;
+        }
+
+        return (
+            state.maneuvers[state.maneuverIndex] ||
+            state.maneuvers[state.maneuvers.length - 1]
         );
     }
 
-    function updateSelectedRouteUi(
-        route
-    ) {
+    function updateNextInstruction(position = getCurrentGpsPosition()) {
+        const maneuver = getNextManeuver(position);
+
+        if (!maneuver) {
+            setHidden("nextInstruction", true);
+            return;
+        }
+
+        let distance =
+            Number(maneuver.distanceFromRouteStartMeters) -
+            Number(state.routeProgressMeters || 0);
+
+        if (!Number.isFinite(distance) || distance < 0) {
+            distance = distanceToManeuverMeters(position, maneuver);
+        }
+
+        if (!Number.isFinite(distance) || distance < 0) {
+            distance = Number(maneuver.distanceMeters) || 0;
+        }
+
+        setText("nextInstructionIcon", maneuver.icon || "↑");
+        setText("nextInstructionText", maneuver.instruction || "Nastavite pravo");
+        setText("nextInstructionDistance", formatDistance(distance));
+        setHidden("nextInstruction", false);
+    }
+
+    function renderManeuvers(route) {
+        const box = $("maneuverList");
+        if (!box) {
+            return;
+        }
+
+        let source = Array.isArray(state.routeResponse?.maneuvers)
+            ? state.routeResponse.maneuvers
+            : [];
+
+        let legs = route?.legs;
+        if (typeof legs === "string") {
+            try {
+                legs = JSON.parse(legs);
+            } catch {
+                legs = null;
+            }
+        }
+
+        if (!source.length) {
+            source = extractLegManeuvers(legs);
+        }
+
+        const normalized = source
+            .map(normalizeManeuver)
+            .filter(Boolean)
+            .sort(
+                (a, b) =>
+                    Number(a.distanceFromRouteStartMeters || 0) -
+                    Number(b.distanceFromRouteStartMeters || 0)
+            );
+
+        state.maneuvers = normalized;
+        state.maneuverIndex = normalized.findIndex((item) => item.type !== "depart");
+        if (state.maneuverIndex < 0) {
+            state.maneuverIndex = 0;
+        }
+
+        state.routeProgressMeters = 0;
+        box.innerHTML = "";
+
+        for (const item of normalized.slice(0, 100)) {
+            const row = document.createElement("div");
+            row.className = "nav-list-item";
+            row.innerHTML = `
+                <span>${escapeHtml(item.icon || "↑")}</span>
+                <strong>${escapeHtml(item.instruction || "Nastavi pravo")}</strong>
+                <small>${escapeHtml(formatDistance(item.distanceMeters))}</small>
+            `;
+            box.appendChild(row);
+        }
+
+        setText("maneuverCount", String(normalized.length));
+        setHidden("maneuversCard", normalized.length === 0);
+        updateNextInstruction();
+    }
+
+    // ============================================================
+    // ALTERNATIVES / DIAGNOSTICS / SUMMARY
+    // ============================================================
+
+    function renderAlternatives(routes) {
+        const box = $("routeAlternatives");
+        if (!box) {
+            return;
+        }
+
+        box.innerHTML = "";
+
+        if (!Array.isArray(routes) || routes.length <= 1) {
+            setText("alternativeCount", "0");
+            setHidden("alternativesCard", true);
+            return;
+        }
+
+        routes.forEach((route, index) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "nav-list-item";
+
+            const restricted = Boolean(route?.analysis?.restricted);
+            const selected = index === state.selectedRouteIndex;
+
+            button.innerHTML = `
+                <span>Ruta ${index + 1}${selected ? " · izabrana" : ""}</span>
+                <strong>${escapeHtml(formatDistance(route.distance))}</strong>
+                <small>${escapeHtml(formatDuration(route.duration))}${restricted ? " · restrikcija" : ""}</small>
+            `;
+
+            button.addEventListener("click", () => selectRoute(index, true));
+            box.appendChild(button);
+        });
+
+        setText("alternativeCount", String(routes.length));
+        setHidden("alternativesCard", false);
+    }
+
+    function updateDiagnostics() {
+        const diagnostics = state.routeResponse?.diagnostics || {};
+
+        setText("diagnosticEngine", diagnostics.engine || "—");
+        setText(
+            "diagnosticGraph",
+            diagnostics.graphVersion != null
+                ? String(diagnostics.graphVersion)
+                : "—"
+        );
+        setText(
+            "diagnosticStates",
+            diagnostics.expandedStates != null
+                ? String(diagnostics.expandedStates)
+                : "—"
+        );
+        setText("diagnosticFallback", diagnostics.usedFallback ? "DA" : "NE");
+
+        setEngine(
+            diagnostics.engine || "PostGIS",
+            Boolean(diagnostics.usedFallback)
+        );
+    }
+
+    function updateSelectedRouteUi(route) {
         if (!route) {
             return;
         }
 
-        const distance =
-            route.distance ??
-            route.Distance ??
-            route?.summary
-                ?.distanceMeters;
+        const response = state.routeResponse || {};
+        const summary = response.summary || {};
+        const violations = routeViolations(route);
+        const restricted = Boolean(route?.analysis?.restricted) || violations.length > 0;
+        const safe = state.profile !== "truck" || !restricted;
 
-        const duration =
-            route.duration ??
-            route.Duration ??
-            route?.summary
-                ?.durationSeconds;
+        const distance = Number(route.distance ?? summary.distanceMeters);
+        const duration = Number(route.duration ?? summary.durationSeconds);
+        const eta =
+            summary.estimatedArrival ||
+            new Date(Date.now() + Math.max(0, duration || 0) * 1000).toISOString();
 
-        const summary =
-            state.routeResponse
-                ?.summary ||
-            {};
+        setText("summaryDistance", formatDistance(distance));
+        setText("summaryDuration", formatDuration(duration));
+        setText("summaryEta", formatEta(eta, duration));
+        setText("summarySafety", safe ? "SAFE" : "RESTRIKCIJA");
+        setText("mapDistance", formatDistance(distance));
+        setText("mapDuration", formatDuration(duration));
+        setText("mapEta", formatEta(eta, duration));
 
-        setText(
-            "summaryDistance",
-            formatDistance(
-                distance ??
-                summary.distanceMeters
-            )
-        );
+        const diagnosticParts = [];
+        const diagnostics = response.diagnostics || {};
 
-        setText(
-            "summaryDuration",
-            formatDuration(
-                duration ??
-                summary.durationSeconds
-            )
-        );
-
-        setText(
-            "summaryEta",
-            formatEta(
-                summary.estimatedArrival,
-                duration ??
-                summary.durationSeconds
-            )
-        );
-
-        setText(
-            "mapDistance",
-            formatDistance(
-                distance
-            )
-        );
-
-        setText(
-            "mapDuration",
-            formatDuration(
-                duration
-            )
-        );
-
-        setText(
-            "mapEta",
-            formatEta(
-                summary.estimatedArrival,
-                duration
-            )
-        );
-
-        const safe =
-            state.routeResponse
-                ?.isTruckSafe ??
-            !routeViolations(
-                route
-            ).length;
-
-        setText(
-            "summarySafety",
-            state.profile ===
-                "truck"
-                ? safe
-                    ? "TRUCK SAFE"
-                    : "UPOZORENJE"
-                : "READY"
-        );
-
-        setText(
-            "routeSafeBadge",
-            state.profile ===
-                "truck"
-                ? safe
-                    ? "TRUCK SAFE"
-                    : "RESTRIKCIJE"
-                : "CAR ROUTE"
-        );
-
-        const diagnostics =
-            state.routeResponse
-                ?.diagnostics ||
-            {};
-
-        const parts = [];
-
-        if (
-            Number.isFinite(
-                Number(
-                    diagnostics.expandedStates
-                )
-            )
-        ) {
-            parts.push(
-                `${diagnostics.expandedStates} states`
-            );
+        if (Number.isFinite(Number(diagnostics.expandedStates))) {
+            diagnosticParts.push(`${diagnostics.expandedStates} states`);
         }
-
-        if (
-            diagnostics.graphVersion !=
-            null
-        ) {
-            parts.push(
-                `graph ${diagnostics.graphVersion}`
-            );
+        if (diagnostics.graphVersion != null) {
+            diagnosticParts.push(`graph ${diagnostics.graphVersion}`);
         }
-
-        if (
-            routeViolations(
-                route
-            ).length
-        ) {
-            parts.push(
-                `${routeViolations(route).length} warnings`
-            );
+        if (violations.length) {
+            diagnosticParts.push(`${violations.length} warnings`);
         }
 
         setText(
             "summaryDiagnostics",
-            parts.length
-                ? parts.join(
-                    " · "
-                )
-                : "—"
+            diagnosticParts.length ? diagnosticParts.join(" · ") : "—"
         );
 
         setText(
-            "diagnosticGraph",
-            diagnostics.graphVersion !=
-                null
-                ? String(
-                    diagnostics.graphVersion
-                )
-                : "—"
+            "routeSafeBadge",
+            state.profile === "truck"
+                ? safe ? "TRUCK SAFE" : "TRUCK WARNING"
+                : "CAR ROUTE"
         );
 
-        setText(
-            "diagnosticStates",
-            diagnostics.expandedStates !=
-                null
-                ? String(
-                    diagnostics.expandedStates
-                )
-                : "—"
-        );
+        const routeStatus = $("mapRouteStatus");
+        if (routeStatus) {
+            routeStatus.textContent = safe ? "Bezbedna" : "Upozorenje";
+            routeStatus.classList.toggle("pm-badge-success", safe);
+            routeStatus.classList.toggle("pm-badge-danger", !safe);
+        }
 
-        setEngine(
-            diagnostics.engine,
-            Boolean(
-                diagnostics.usedFallback
-            )
-        );
-
-        renderWarnings(
-            route,
-            state.routeResponse
-        );
-
+        renderWarnings(violations);
+        setText("diagnosticGraph", diagnostics.graphVersion != null ? String(diagnostics.graphVersion) : "—");
+        setText("diagnosticStates", diagnostics.expandedStates != null ? String(diagnostics.expandedStates) : "—");
+        setEngine(diagnostics.engine || "PostGIS", Boolean(diagnostics.usedFallback));
         updateNextInstruction();
     }
 
-    function selectRoute(
-        index,
-        fit
-    ) {
-        const routes =
-            state.routeResponse
-                ?.routes;
-
-        if (
-            !Array.isArray(
-                routes
-            ) ||
-            !routes[index]
-        ) {
+    function selectRoute(index, fit = false) {
+        const routes = state.routeResponse?.routes;
+        if (!Array.isArray(routes) || !routes[index]) {
             return;
         }
 
-        state.selectedRouteIndex =
-            index;
-
-        const route =
-            routes[index];
-
-        state.routeCoordinates =
-            geometryToLatLngs(
-                route.geometry
-            );
+        state.selectedRouteIndex = index;
+        const route = routes[index];
+        state.routeCoordinates = geometryToLatLngs(route.geometry);
+        buildRouteCumulativeDistances();
 
         updateRouteLayerStyles();
+        updateSelectedRouteUi(route);
+        renderAlternatives(routes);
+        renderManeuvers(route);
 
-        updateSelectedRouteUi(
-            route
-        );
-
-        renderAlternatives(
-            routes
-        );
-
-        if (
-            fit &&
-            state.routeCoordinates
-                .length
-        ) {
+        if (fit) {
             fitRoute();
         }
     }
 
-    // ============================================================
-    // ROUTE RENDERING
-    // ============================================================
-
-    function renderRouteResponse(
-        response
-    ) {
+    function renderRouteResponse(response) {
         clearRouteLayers();
 
         if (
             !response ||
-            !Array.isArray(
-                response.routes
-            ) ||
+            !Array.isArray(response.routes) ||
             response.routes.length === 0
         ) {
-            throw new Error(
-                "Routing servis nije vratio nijednu rutu."
-            );
+            throw new Error("Routing servis nije vratio nijednu rutu.");
         }
 
-        state.routeResponse =
-            response;
+        state.routeResponse = response;
 
-        const requestedIndex =
-            Number(
-                response.selectedRouteIndex ??
-                0
-            );
-
+        const requestedIndex = Number(response.selectedRouteIndex ?? 0);
         state.selectedRouteIndex =
-            Number.isInteger(
-                requestedIndex
-            ) &&
+            Number.isInteger(requestedIndex) &&
                 requestedIndex >= 0 &&
-                requestedIndex <
-                response.routes.length
+                requestedIndex < response.routes.length
                 ? requestedIndex
                 : 0;
 
-        for (
-            const [
-                index,
-                route
-            ]
-            of response.routes.entries()
-        ) {
-            const coordinates =
-                geometryToLatLngs(
-                    route.geometry
-                );
-
-            if (
-                !coordinates.length
-            ) {
+        for (const [index, route] of response.routes.entries()) {
+            const coordinates = geometryToLatLngs(route.geometry);
+            if (coordinates.length < 2) {
                 continue;
             }
 
-            const layer =
-                L.polyline(
-                    coordinates,
-                    {
-                        weight:
-                            index ===
-                                state.selectedRouteIndex
-                                ? 7
-                                : 4,
+            const active = index === state.selectedRouteIndex;
+            const layer = L.polyline(coordinates, {
+                weight: active ? 7 : 4,
+                opacity: active ? 0.96 : 0.36,
+                color: active ? "#22c55e" : "#64748b",
+                className: active
+                    ? "pm-route-active"
+                    : "pm-route-alternative"
+            }).addTo(state.map);
 
-                        opacity:
-                            index ===
-                                state.selectedRouteIndex
-                                ? 0.95
-                                : 0.35,
-
-                        className:
-                            index ===
-                                state.selectedRouteIndex
-                                ? "pm-route-active"
-                                : "pm-route-alternative"
-                    }
-                ).addTo(
-                    state.map
-                );
-
-            layer.on(
-                "click",
-                () =>
-                    selectRoute(
-                        index,
-                        false
-                    )
-            );
-
-            state.routeLayers.push({
-                index,
-                layer
-            });
+            layer.on("click", () => selectRoute(index, false));
+            state.routeLayers.push({ index, layer });
         }
 
-        renderManeuvers(
-            response
-        );
+        setHidden("mapRouteCard", false);
+        setHidden("startLiveNavigation", false);
+        $("startLiveNavigation") && ($("startLiveNavigation").disabled = false);
 
-        setHidden(
-            "mapRouteCard",
-            false
-        );
-
-        selectRoute(
-            state.selectedRouteIndex,
-            true
-        );
+        selectRoute(state.selectedRouteIndex, true);
     }
 
     // ============================================================
     // ROUTING
     // ============================================================
 
-    async function calculateRoute({
-        silent = false
-    } = {}) {
-        if (
-            state.routing
-        ) {
+    async function calculateRoute({ silent = false } = {}) {
+        if (state.routing) {
             return false;
         }
 
         showError("");
 
-        if (
-            !state.start
-        ) {
+        if (!state.start) {
             try {
-                await resolveInput(
-                    "start"
-                );
-            }
-            catch (error) {
-                console.warn(
-                    "[ProMap Navigation] Start resolve failed:",
-                    error
-                );
+                await resolveInput("start");
+            } catch (error) {
+                console.warn("[ProMap Navigation] Start resolve failed:", error);
             }
         }
 
-        if (
-            !state.destination
-        ) {
+        if (!state.destination) {
             try {
-                await resolveInput(
-                    "end"
-                );
-            }
-            catch (error) {
-                console.warn(
-                    "[ProMap Navigation] Destination resolve failed:",
-                    error
-                );
+                await resolveInput("end");
+            } catch (error) {
+                console.warn("[ProMap Navigation] Destination resolve failed:", error);
             }
         }
 
-        if (
-            !state.start ||
-            !state.destination
-        ) {
+        if (!state.start || !state.destination) {
             showError(
                 "Izaberi validan start i odredište iz predloga, unesi koordinate ili izaberi tačke na mapi."
             );
-
             return false;
         }
 
-        const truckError =
-            validateTruck();
-
-        if (
-            truckError
-        ) {
-            showError(
-                truckError
-            );
-
+        const truckError = validateTruck();
+        if (truckError) {
+            showError(truckError);
             return false;
         }
 
-        const directDistance =
-            haversineMeters(
-                state.start.latitude,
-                state.start.longitude,
-                state.destination.latitude,
-                state.destination.longitude
-            );
-
-        if (
-            directDistance < 10
-        ) {
-            showError(
-                "Start i odredište su preblizu."
-            );
-
-            return false;
-        }
-
-        if (
-            !window.ProMap.Routing
-                ?.calculate
-        ) {
-            showError(
-                "Routing JS modul nije učitan."
-            );
-
-            return false;
-        }
-
-        setRoutingUi(
-            true
+        const directDistance = haversineMeters(
+            state.start.latitude,
+            state.start.longitude,
+            state.destination.latitude,
+            state.destination.longitude
         );
 
+        if (directDistance < 10) {
+            showError("Start i odredište su preblizu.");
+            return false;
+        }
+
+        if (!window.ProMap.Routing?.calculate) {
+            showError("Routing JS modul nije učitan.");
+            return false;
+        }
+
+        setRoutingUi(true);
+
         try {
-            const response =
-                await window.ProMap.Routing.calculate(
-                    requestState()
-                );
+            const response = await window.ProMap.Routing.calculate(requestState());
+            renderRouteResponse(response);
+            setText("navStatus", "READY");
 
-            renderRouteResponse(
-                response
-            );
-
-            setText(
-                "navStatus",
-                "READY"
-            );
-
-            if (
-                !silent
-            ) {
+            if (!silent) {
                 showError("");
             }
 
             return true;
-        }
-        catch (
-        error
-        ) {
-            console.error(
-                "[ProMap Navigation] Routing error:",
-                error
-            );
+        } catch (error) {
+            console.error("[ProMap Navigation] Routing error:", error);
 
             let message =
                 error?.message ||
                 "Routing servis trenutno nije dostupan.";
 
-            if (
-                error?.status ===
-                503
-            ) {
+            if (error?.status === 503) {
                 message =
                     "Routing servis trenutno nije dostupan. Proveri PostGIS graph i OSRM fallback.";
             }
 
-            showError(
-                message
-            );
+            showError(message);
 
-            const badge =
-                $("engineBadge");
-
-            if (
-                badge
-            ) {
-                badge.classList.remove(
-                    "ready"
-                );
-
-                badge.classList.add(
-                    "error"
-                );
+            const badge = $("engineBadge");
+            if (badge) {
+                badge.classList.remove("ready");
+                badge.classList.add("error");
             }
 
             return false;
-        }
-        finally {
-            setRoutingUi(
-                false
-            );
+        } finally {
+            setRoutingUi(false);
         }
     }
 
     // ============================================================
-    // VEHICLE
+    // VEHICLE / POINTS
     // ============================================================
 
-    function applyPreset(
-        value
-    ) {
-        const preset =
-            PRESETS[value];
-
+    function applyPreset(value) {
+        const preset = PRESETS[value];
         if (!preset) {
             return;
         }
 
         const values = {
-            navWeight:
-                preset.weight,
-
-            navHeight:
-                preset.height,
-
-            navWidth:
-                preset.width,
-
-            navLength:
-                preset.length,
-
-            navAxleLoad:
-                preset.axleLoad,
-
-            navAxles:
-                preset.axles,
-
-            navMaxSpeed:
-                preset.maxSpeed
+            navWeight: preset.weight,
+            navHeight: preset.height,
+            navWidth: preset.width,
+            navLength: preset.length,
+            navAxleLoad: preset.axleLoad,
+            navAxles: preset.axles,
+            navMaxSpeed: preset.maxSpeed
         };
 
-        for (
-            const [
-                id,
-                value
-            ]
-            of Object.entries(
-                values
-            )
-        ) {
-            const element =
-                $(id);
-
-            if (
-                element
-            ) {
-                element.value =
-                    String(
-                        value
-                    );
+        for (const [id, nextValue] of Object.entries(values)) {
+            const element = $(id);
+            if (element) {
+                element.value = String(nextValue);
             }
         }
-    }
-
-    function setProfile(
-        profile
-    ) {
-        state.profile =
-            profile === "car"
-                ? "car"
-                : "truck";
-
-        $("truckMode")
-            ?.classList.toggle(
-                "active",
-                state.profile ===
-                "truck"
-            );
-
-        $("carMode")
-            ?.classList.toggle(
-                "active",
-                state.profile ===
-                "car"
-            );
-
-        setText(
-            "truckModeBadge",
-            state.profile ===
-                "truck"
-                ? "HGV"
-                : "CAR"
-        );
-
-        setText(
-            "routeSafeBadge",
-            state.profile ===
-                "truck"
-                ? "TRUCK SAFE"
-                : "CAR ROUTE"
-        );
-
-        setHidden(
-            "truckFields",
-            state.profile !==
-            "truck"
-        );
-
-        clearRouteResult();
-
-        updateVehicleMode();
     }
 
     function updateVehicleMode() {
-        const button =
-            $("calcRoute");
-
-        const strong =
-            button?.querySelector(
-                "strong"
-            );
-
-        if (
-            strong
-        ) {
-            strong.textContent =
-                state.profile ===
-                    "truck"
-                    ? "Izračunaj truck rutu"
-                    : "Izračunaj auto rutu";
+        const button = $("calcRoute");
+        const strong = button?.querySelector("strong");
+        if (strong) {
+            strong.textContent = state.profile === "truck"
+                ? "Izračunaj truck rutu"
+                : "Izračunaj auto rutu";
         }
     }
 
+    function setProfile(profile) {
+        state.profile = profile === "car" ? "car" : "truck";
+
+        $("truckMode")?.classList.toggle("active", state.profile === "truck");
+        $("carMode")?.classList.toggle("active", state.profile === "car");
+
+        setText("truckModeBadge", state.profile === "truck" ? "HGV" : "CAR");
+        setHidden("truckFields", state.profile !== "truck");
+        setText(
+            "routeSafeBadge",
+            state.profile === "truck" ? "TRUCK SAFE" : "CAR ROUTE"
+        );
+
+        clearRouteResult();
+        updateVehicleMode();
+    }
+
     function swapPoints() {
-        const oldStart =
-            state.start;
+        const oldStart = state.start;
+        const oldDestination = state.destination;
 
-        const oldDestination =
-            state.destination;
-
-        if (
-            oldStart
-        ) {
-            setDestination(
-                oldStart
-            );
-
-            if (
-                $("navEnd")
-            ) {
-                $("navEnd").value =
-                    oldStart.label ||
-                    `${oldStart.latitude.toFixed(6)}, ${oldStart.longitude.toFixed(6)}`;
-            }
+        if (oldDestination) {
+            setStart(oldDestination);
+            $("navStart") &&
+                ($("navStart").value =
+                    oldDestination.label ||
+                    `${oldDestination.latitude.toFixed(6)}, ${oldDestination.longitude.toFixed(6)}`);
         }
 
-        if (
-            oldDestination
-        ) {
-            setStart(
-                oldDestination
-            );
-
-            if (
-                $("navStart")
-            ) {
-                $("navStart").value =
-                    oldDestination.label ||
-                    `${oldDestination.latitude.toFixed(6)}, ${oldDestination.longitude.toFixed(6)}`;
-            }
+        if (oldStart) {
+            setDestination(oldStart);
+            $("navEnd") &&
+                ($("navEnd").value =
+                    oldStart.label ||
+                    `${oldStart.latitude.toFixed(6)}, ${oldStart.longitude.toFixed(6)}`);
         }
 
         clearRouteResult();
     }
 
-    // ============================================================
-    // MAP PICK
-    // ============================================================
-
-    function activateMapPick(
-        target
-    ) {
-        if (
-            !state.map
-        ) {
+    function activateMapPick(target) {
+        if (!state.map) {
             return;
         }
 
-        state.picking =
-            target ===
-                "end"
-                ? "destination"
-                : target;
-
-        state.map
-            .getContainer()
-            .style.cursor =
-            "crosshair";
+        state.picking = target === "end" ? "destination" : target;
+        state.map.getContainer().style.cursor = "crosshair";
 
         showError(
-            state.picking ===
-                "start"
+            state.picking === "start"
                 ? "Klikni na mapu da izabereš polaznu tačku."
                 : "Klikni na mapu da izabereš odredište."
         );
     }
 
-    // ============================================================
-    // FIT ROUTE
-    // ============================================================
-
     function fitRoute() {
-        if (
-            !state.map
-        ) {
+        if (!state.map) {
             return;
         }
 
-        const points =
-            state.routeCoordinates.length
-                ? state.routeCoordinates
-                : [
-                    state.start
-                        ? [
-                            state.start.latitude,
-                            state.start.longitude
-                        ]
-                        : null,
+        const points = state.routeCoordinates.length
+            ? state.routeCoordinates
+            : [
+                state.start
+                    ? [state.start.latitude, state.start.longitude]
+                    : null,
+                state.destination
+                    ? [state.destination.latitude, state.destination.longitude]
+                    : null
+            ].filter(Boolean);
 
-                    state.destination
-                        ? [
-                            state.destination.latitude,
-                            state.destination.longitude
-                        ]
-                        : null
-                ].filter(
-                    Boolean
-                );
-
-        if (
-            !points.length
-        ) {
+        if (!points.length) {
             return;
         }
 
-        state.map.fitBounds(
-            L.latLngBounds(
-                points
-            ),
-            {
-                padding: [
-                    30,
-                    30
-                ],
+        state.map.fitBounds(L.latLngBounds(points), {
+            padding: [30, 30],
+            maxZoom: state.routeCoordinates.length ? undefined : 14
+        });
 
-                maxZoom:
-                    state.routeCoordinates
-                        .length
-                        ? undefined
-                        : 14
-            }
-        );
-
-        setTimeout(
-            () =>
-                syncTomTomBackground(),
-            50
-        );
+        if (state.tomTom.visible) {
+            window.setTimeout(syncTomTomBackground, 60);
+        }
     }
 
     // ============================================================
@@ -3483,185 +2317,90 @@ window.ProMap = window.ProMap || {};
     // ============================================================
 
     function centerGps() {
-        const position =
-            getCurrentGpsPosition();
+        const position = getCurrentGpsPosition();
 
-        if (
-            !position ||
-            !state.map
-        ) {
-            showError(
-                "GPS trenutno nema dostupnu poziciju."
-            );
-
+        if (!position || !state.map) {
+            showError("GPS trenutno nema dostupnu poziciju.");
             return;
         }
 
-        state.liveFollow =
-            true;
-
+        state.liveFollow = true;
         state.map.setView(
-            [
-                position.latitude,
-                position.longitude
-            ],
-            Math.max(
-                17,
-                state.map.getZoom() ||
-                17
-            ),
-            {
-                animate:
-                    true
-            }
+            [position.latitude, position.longitude],
+            Math.max(17, state.map.getZoom() || 17),
+            { animate: true }
         );
     }
 
-    function updateGpsMarker(
-        position
-    ) {
-        if (
-            !state.map
-        ) {
+    function updateGpsMarker(position) {
+        if (!state.map) {
             return;
         }
 
-        const latitude =
-            Number(
-                position?.latitude ??
-                position?.coords?.latitude
-            );
+        const latitude = Number(
+            position?.latitude ?? position?.coords?.latitude
+        );
+        const longitude = Number(
+            position?.longitude ?? position?.coords?.longitude
+        );
 
-        const longitude =
-            Number(
-                position?.longitude ??
-                position?.coords?.longitude
-            );
-
-        if (
-            !Number.isFinite(
-                latitude
-            ) ||
-            !Number.isFinite(
-                longitude
-            )
-        ) {
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
             return;
         }
 
-        if (
-            !state.gpsMarker
-        ) {
-            state.gpsMarker =
-                L.circleMarker(
-                    [
-                        latitude,
-                        longitude
-                    ],
-                    {
-                        radius:
-                            8,
-
-                        weight:
-                            3,
-
-                        fillOpacity:
-                            0.9
-                    }
-                ).addTo(
-                    state.map
-                );
-        }
-        else {
-            state.gpsMarker.setLatLng(
-                [
-                    latitude,
-                    longitude
-                ]
-            );
+        if (!state.gpsMarker) {
+            state.gpsMarker = L.circleMarker(
+                [latitude, longitude],
+                {
+                    radius: 8,
+                    weight: 3,
+                    fillOpacity: 0.9
+                }
+            ).addTo(state.map);
+        } else {
+            state.gpsMarker.setLatLng([latitude, longitude]);
         }
 
-        const speed =
-            Number(
-                position?.speed ??
-                position?.coords?.speed
-            );
+        const speed = Number(position?.speed ?? position?.coords?.speed);
+        const accuracy = Number(position?.accuracy ?? position?.coords?.accuracy);
 
-        const accuracy =
-            Number(
-                position?.accuracy ??
-                position?.coords?.accuracy
-            );
-
-        setGpsStatus(
-            "ON",
-            "ready"
-        );
-
-        setText(
-            "liveChip",
-            "GPS ON"
-        );
-
+        setGpsStatus("ON", "ready");
+        setText("liveChip", "GPS ON");
         setText(
             "liveSpeed",
-            Number.isFinite(
-                speed
-            )
-                ? `${Math.round(
-                    speed * 3.6
-                )} km/h`
-                : "—"
+            Number.isFinite(speed) ? `${Math.round(speed * 3.6)} km/h` : "—"
         );
-
         setText(
             "liveAccuracy",
-            Number.isFinite(
-                accuracy
-            )
-                ? `±${Math.round(
-                    accuracy
-                )} m`
-                : "—"
+            Number.isFinite(accuracy) ? `±${Math.round(accuracy)} m` : "—"
         );
+        setText("livePosition", `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
 
-        setText(
-            "livePosition",
-            `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
-        );
-
-        const offRoute =
-            distanceToRouteMeters(
-                latitude,
-                longitude
-            );
-
+        const offRoute = distanceToRouteMeters(latitude, longitude);
         setText(
             "liveOffRoute",
             offRoute == null
                 ? "—"
                 : offRoute > 100
-                    ? `DA · ${Math.round(
-                        offRoute
-                    )} m`
+                    ? `DA · ${Math.round(offRoute)} m`
                     : "NE"
         );
 
-        if (
-            state.live &&
-            state.liveFollow
-        ) {
-            state.map.panTo(
-                [
-                    latitude,
-                    longitude
-                ],
-                {
-                    animate:
-                        true,
+        updateNextInstruction({
+            latitude,
+            longitude,
+            accuracy,
+            speed,
+            heading: Number(position?.heading ?? position?.coords?.heading),
+            timestamp: position?.timestamp ?? position?.coords?.timestamp
+        });
 
-                    duration:
-                        0.3
+        if (state.live && state.liveFollow) {
+            state.map.panTo(
+                [latitude, longitude],
+                {
+                    animate: true,
+                    duration: 0.3
                 }
             );
         }
@@ -3671,374 +2410,167 @@ window.ProMap = window.ProMap || {};
             state.routeResponse &&
             offRoute != null &&
             offRoute > 100 &&
-            Date.now() -
-            state.lastRerouteAt >
-            30000
+            Date.now() - state.lastRerouteAt > 30000
         ) {
-            state.lastRerouteAt =
-                Date.now();
-
+            state.lastRerouteAt = Date.now();
             state.start = {
                 latitude,
                 longitude,
-                label:
-                    "Trenutna GPS lokacija"
+                label: "Trenutna GPS lokacija"
             };
 
-            if (
-                $("navStart")
-            ) {
-                $("navStart").value =
-                    `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
-            }
+            $("navStart") &&
+                ($("navStart").value = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+            setText("navStartResolved", "Trenutna GPS lokacija");
 
-            setText(
-                "navStartResolved",
-                "Trenutna GPS lokacija"
-            );
-
-            calculateRoute({
-                silent:
-                    true
-            });
+            void calculateRoute({ silent: true });
         }
     }
 
-    function gpsErrorMessage(
-        error
-    ) {
-        switch (
-        error?.code
-        ) {
+    function gpsErrorMessage(error) {
+        switch (error?.code) {
             case 1:
                 return "GPS dozvola je odbijena.";
-
             case 2:
                 return "GPS lokacija trenutno nije dostupna.";
-
             case 3:
                 return "GPS zahtev je istekao.";
-
             default:
                 return "Greška pri čitanju GPS lokacije.";
         }
     }
 
     async function startLiveNavigation() {
-        if (
-            !window.ProMap.Gps
-                ?.isSupported?.()
-        ) {
-            showError(
-                "Browser ne podržava GPS geolokaciju."
-            );
-
+        if (!window.ProMap.Gps?.isSupported?.()) {
+            showError("Browser ne podržava GPS geolokaciju.");
             return;
         }
 
-        if (
-            !state.routeResponse
-        ) {
-            const ok =
-                await calculateRoute();
-
-            if (
-                !ok ||
-                !state.routeResponse
-            ) {
-                showError(
-                    "Ruta nije izračunata. Prvo izračunaj rutu."
-                );
-
+        if (!state.routeResponse) {
+            const ok = await calculateRoute();
+            if (!ok || !state.routeResponse) {
+                showError("Ruta nije izračunata. Prvo izračunaj rutu.");
                 return;
             }
         }
 
         window.ProMap.Gps.stop();
 
-        state.live =
-            true;
+        state.live = true;
+        state.liveFollow = true;
+        state.lastRerouteAt = 0;
 
-        state.liveFollow =
-            true;
-
-        state.lastRerouteAt =
-            0;
-
-        setHidden(
-            "startLiveNavigation",
-            true
-        );
-
-        setHidden(
-            "stopLiveNavigation",
-            false
-        );
-
-        setGpsStatus(
-            "STARTING",
-            "warning"
-        );
-
-        setText(
-            "liveChip",
-            "GPS STARTING"
-        );
+        setHidden("startLiveNavigation", true);
+        setHidden("stopLiveNavigation", false);
+        setGpsStatus("STARTING", "warning");
+        setText("liveChip", "GPS STARTING");
 
         window.ProMap.Gps.start({
-            enableHighAccuracy:
-                true,
-
-            maximumAge:
-                2000,
-
-            timeout:
-                15000,
-
-            onPosition:
-                updateGpsMarker,
-
-            onError:
-                (
-                    error
-                ) => {
-                    console.warn(
-                        "[ProMap Navigation] GPS error:",
-                        error
-                    );
-
-                    showError(
-                        gpsErrorMessage(
-                            error
-                        )
-                    );
-
-                    setGpsStatus(
-                        "ERROR",
-                        "danger"
-                    );
-
-                    setText(
-                        "liveChip",
-                        "GPS ERROR"
-                    );
-                }
+            enableHighAccuracy: true,
+            maximumAge: 2000,
+            timeout: 15000,
+            onPosition: updateGpsMarker,
+            onError: (error) => {
+                console.warn("[ProMap Navigation] GPS error:", error);
+                showError(gpsErrorMessage(error));
+                setGpsStatus("ERROR", "danger");
+                setText("liveChip", "GPS ERROR");
+            }
         });
     }
 
     function stopLiveNavigation() {
-        window.ProMap.Gps
-            ?.stop?.();
+        window.ProMap.Gps?.stop?.();
 
-        state.live =
-            false;
+        state.live = false;
+        state.liveFollow = true;
 
-        state.liveFollow =
-            true;
-
-        setHidden(
-            "startLiveNavigation",
-            false
-        );
-
-        setHidden(
-            "stopLiveNavigation",
-            true
-        );
-
-        setGpsStatus(
-            "OFF"
-        );
-
-        setText(
-            "liveChip",
-            "GPS OFF"
-        );
-
-        setText(
-            "liveSpeed",
-            "0 km/h"
-        );
-
-        setText(
-            "liveAccuracy",
-            "—"
-        );
-
-        setText(
-            "liveOffRoute",
-            "NE"
-        );
-
-        setText(
-            "livePosition",
-            "Lokacija nije aktivna"
-        );
+        setHidden("startLiveNavigation", false);
+        setHidden("stopLiveNavigation", true);
+        setGpsStatus("OFF");
+        setText("liveChip", "GPS OFF");
+        setText("liveSpeed", "0 km/h");
+        setText("liveAccuracy", "—");
+        setText("liveOffRoute", "NE");
+        setText("livePosition", "Lokacija nije aktivna");
     }
 
     function useCurrentLocation() {
-        if (
-            !navigator.geolocation
-        ) {
-            showError(
-                "Browser ne podržava GPS geolokaciju."
-            );
-
+        if (!navigator.geolocation) {
+            showError("Browser ne podržava GPS geolokaciju.");
             return;
         }
 
-        setGpsStatus(
-            "LOCATING",
-            "warning"
-        );
+        setGpsStatus("LOCATING", "warning");
 
         navigator.geolocation.getCurrentPosition(
-            (
-                position
-            ) => {
+            (position) => {
                 const point = {
-                    latitude:
-                        position.coords
-                            .latitude,
-
-                    longitude:
-                        position.coords
-                            .longitude,
-
-                    label:
-                        "Moja trenutna lokacija"
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                    label: "Moja trenutna lokacija"
                 };
 
-                if (
-                    $("navStart")
-                ) {
-                    $("navStart").value =
-                        `${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`;
-                }
+                $("navStart") &&
+                    ($("navStart").value =
+                        `${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`);
 
-                setStart(
-                    point
-                );
-
-                setGpsStatus(
-                    "READY",
-                    "ready"
-                );
+                setStart(point);
+                setGpsStatus("READY", "ready");
 
                 state.map?.setView(
-                    [
-                        point.latitude,
-                        point.longitude
-                    ],
+                    [point.latitude, point.longitude],
                     14
                 );
             },
-
-            (
-                error
-            ) => {
-                showError(
-                    gpsErrorMessage(
-                        error
-                    )
-                );
-
-                setGpsStatus(
-                    "ERROR",
-                    "danger"
-                );
+            (error) => {
+                showError(gpsErrorMessage(error));
+                setGpsStatus("ERROR", "danger");
             },
-
             {
-                enableHighAccuracy:
-                    true,
-
-                maximumAge:
-                    5000,
-
-                timeout:
-                    15000
+                enableHighAccuracy: true,
+                maximumAge: 0,
+                timeout: 15000
             }
         );
     }
 
     // ============================================================
-    // DEFAULTS
+    // MAP TABS
     // ============================================================
 
-    function initializeDefaults() {
-        if (
-            $("navStart")
-        ) {
-            $("navStart").value =
-                $("navStart").value.trim() ||
-                DEFAULTS.start.label;
+    function setMapMode(mode) {
+        const ids = {
+            route: "mapRouteTab",
+            restrictions: "mapRestrictionsTab",
+            gps: "mapGpsTab"
+        };
+
+        Object.values(ids).forEach((id) => $(id)?.classList.remove("active"));
+        $(ids[mode])?.classList.add("active");
+
+        if (mode === "route") {
+            fitRoute();
+            return;
         }
 
-        if (
-            $("navEnd")
-        ) {
-            $("navEnd").value =
-                $("navEnd").value.trim() ||
-                DEFAULTS.destination.label;
+        if (mode === "restrictions") {
+            const warnings = $("warningsCard");
+            if (warnings && !warnings.hidden) {
+                warnings.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            } else {
+                showError("Izabrana ruta nema aktivna upozorenja.");
+            }
+            return;
         }
 
-        setStart(
-            DEFAULTS.start
-        );
-
-        setDestination(
-            DEFAULTS.destination
-        );
-
-        applyPreset(
-            $("truckPreset")
-                ?.value ||
-            "40t"
-        );
-
-        setProfile(
-            "truck"
-        );
-
-        setGpsStatus(
-            "OFF"
-        );
-
-        setText(
-            "engineHeader",
-            "POSTGIS"
-        );
-
-        setText(
-            "summaryEngine",
-            "—"
-        );
-
-        setText(
-            "liveChip",
-            "GPS OFF"
-        );
-
-        setText(
-            "liveSpeed",
-            "0 km/h"
-        );
-
-        setText(
-            "liveAccuracy",
-            "—"
-        );
-
-        setText(
-            "liveOffRoute",
-            "NE"
-        );
-
-        setText(
-            "livePosition",
-            "Lokacija nije aktivna"
-        );
+        if (mode === "gps") {
+            if (getCurrentGpsPosition()) {
+                centerGps();
+            } else if (!state.live) {
+                void startLiveNavigation();
+            }
+        }
     }
 
     // ============================================================
@@ -4046,290 +2578,126 @@ window.ProMap = window.ProMap || {};
     // ============================================================
 
     function bindEvents() {
-        $("calcRoute")
-            ?.addEventListener(
-                "click",
-                () =>
-                    calculateRoute()
-            );
+        $("calcRoute")?.addEventListener("click", () => void calculateRoute());
+        $("swapPoints")?.addEventListener("click", swapPoints);
+        $("truckMode")?.addEventListener("click", () => setProfile("truck"));
+        $("carMode")?.addEventListener("click", () => setProfile("car"));
 
-        $("swapPoints")
-            ?.addEventListener(
-                "click",
-                swapPoints
-            );
+        $("truckPreset")?.addEventListener("change", (event) => {
+            applyPreset(event.target.value);
+        });
 
-        $("truckMode")
-            ?.addEventListener(
-                "click",
-                () =>
-                    setProfile(
-                        "truck"
-                    )
-            );
+        $("useCurrentLocation")?.addEventListener("click", useCurrentLocation);
+        $("fitRoute")?.addEventListener("click", fitRoute);
+        $("centerGps")?.addEventListener("click", centerGps);
+        $("pickStart")?.addEventListener("click", () => activateMapPick("start"));
+        $("pickEnd")?.addEventListener("click", () => activateMapPick("destination"));
 
-        $("carMode")
-            ?.addEventListener(
-                "click",
-                () =>
-                    setProfile(
-                        "car"
-                    )
-            );
+        $("startLiveNavigation")?.addEventListener("click", () => void startLiveNavigation());
+        $("stopLiveNavigation")?.addEventListener("click", stopLiveNavigation);
 
-        $("truckPreset")
-            ?.addEventListener(
-                "change",
-                (
-                    event
-                ) =>
-                    applyPreset(
-                        event.target.value
-                    )
-            );
+        $("mapRouteTab")?.addEventListener("click", () => setMapMode("route"));
+        $("mapRestrictionsTab")?.addEventListener("click", () => setMapMode("restrictions"));
+        $("mapGpsTab")?.addEventListener("click", () => setMapMode("gps"));
 
-        $("useCurrentLocation")
-            ?.addEventListener(
-                "click",
-                useCurrentLocation
-            );
+        $("navStart")?.addEventListener("input", () => scheduleGeocode("start"));
+        $("navEnd")?.addEventListener("input", () => scheduleGeocode("end"));
 
-        $("fitRoute")
-            ?.addEventListener(
-                "click",
-                fitRoute
-            );
-
-        $("centerGps")
-            ?.addEventListener(
-                "click",
-                centerGps
-            );
-
-        $("pickStart")
-            ?.addEventListener(
-                "click",
-                () =>
-                    activateMapPick(
-                        "start"
-                    )
-            );
-
-        $("pickEnd")
-            ?.addEventListener(
-                "click",
-                () =>
-                    activateMapPick(
-                        "destination"
-                    )
-            );
-
-        $("startLiveNavigation")
-            ?.addEventListener(
-                "click",
-                startLiveNavigation
-            );
-
-        $("stopLiveNavigation")
-            ?.addEventListener(
-                "click",
-                stopLiveNavigation
-            );
-
-        $("mapRouteTab")
-            ?.addEventListener(
-                "click",
-                () =>
-                    fitRoute()
-            );
-
-        $("mapGpsTab")
-            ?.addEventListener(
-                "click",
-                () =>
-                    centerGps()
-            );
-
-        $("mapRestrictionsTab")
-            ?.addEventListener(
-                "click",
-                () => {
-                    const card =
-                        $("warningsCard");
-
-                    if (
-                        card &&
-                        !card.hidden
-                    ) {
-                        card.scrollIntoView({
-                            behavior:
-                                "smooth",
-
-                            block:
-                                "nearest"
-                        });
-                    }
-                }
-            );
-
-        $("navStart")
-            ?.addEventListener(
-                "input",
-                () =>
-                    scheduleGeocode(
-                        "start"
-                    )
-            );
-
-        $("navEnd")
-            ?.addEventListener(
-                "input",
-                () =>
-                    scheduleGeocode(
-                        "end"
-                    )
-            );
-
-        $("navStart")
-            ?.addEventListener(
-                "keydown",
-                async (
-                    event
-                ) => {
-                    if (
-                        event.key !==
-                        "Enter"
-                    ) {
-                        return;
-                    }
-
-                    event.preventDefault();
-
-                    try {
-                        await resolveInput(
-                            "start"
-                        );
-
-                        clearSuggestions(
-                            "start"
-                        );
-                    }
-                    catch (
-                    error
-                    ) {
-                        showError(
-                            error?.message ||
-                            "Start nije moguće pronaći."
-                        );
-                    }
-                }
-            );
-
-        $("navEnd")
-            ?.addEventListener(
-                "keydown",
-                async (
-                    event
-                ) => {
-                    if (
-                        event.key !==
-                        "Enter"
-                    ) {
-                        return;
-                    }
-
-                    event.preventDefault();
-
-                    try {
-                        await resolveInput(
-                            "end"
-                        );
-
-                        clearSuggestions(
-                            "end"
-                        );
-                    }
-                    catch (
-                    error
-                    ) {
-                        showError(
-                            error?.message ||
-                            "Odredište nije moguće pronaći."
-                        );
-                    }
-                }
-            );
-
-        document.addEventListener(
-            "click",
-            (
-                event
-            ) => {
-                if (
-                    !event.target.closest(
-                        ".nav-input-wrapper"
-                    )
-                ) {
-                    clearSuggestions(
-                        "start"
-                    );
-
-                    clearSuggestions(
-                        "end"
-                    );
-                }
+        $("navStart")?.addEventListener("keydown", async (event) => {
+            if (event.key !== "Enter") {
+                return;
             }
-        );
 
-        window.addEventListener(
-            "resize",
-            () => {
-                state.map
-                    ?.invalidateSize();
+            event.preventDefault();
 
-                state.tomTomMap
-                    ?.resize();
+            try {
+                await resolveInput("start");
+            } catch (error) {
+                showError(error?.message || "Start nije moguće pronaći.");
             }
-        );
+        });
+
+        $("navEnd")?.addEventListener("keydown", async (event) => {
+            if (event.key !== "Enter") {
+                return;
+            }
+
+            event.preventDefault();
+
+            try {
+                await resolveInput("end");
+            } catch (error) {
+                showError(error?.message || "Odredište nije moguće pronaći.");
+            }
+        });
+
+        document.addEventListener("click", (event) => {
+            if (!event.target.closest(".nav-input-wrapper")) {
+                clearSuggestions("start");
+                clearSuggestions("end");
+            }
+        });
+
+        window.addEventListener("resize", () => {
+            state.map?.invalidateSize();
+            if (state.tomTom.visible) {
+                syncTomTomBackground();
+            }
+        });
     }
 
     // ============================================================
-    // INIT
+    // DEFAULTS / INIT
     // ============================================================
+
+    function initializeDefaults() {
+        if ($("navStart")) {
+            $("navStart").value = $("navStart").value.trim() || DEFAULTS.start.label;
+        }
+
+        if ($("navEnd")) {
+            $("navEnd").value = $("navEnd").value.trim() || DEFAULTS.destination.label;
+        }
+
+        setStart(DEFAULTS.start);
+        setDestination(DEFAULTS.destination);
+
+        applyPreset($("truckPreset")?.value || "40t");
+        setProfile("truck");
+
+        setGpsStatus("OFF");
+        setText("engineHeader", "POSTGIS");
+        setText("summaryEngine", "—");
+        setText("diagnosticEngine", "—");
+        setText("diagnosticGraph", "—");
+        setText("diagnosticStates", "—");
+        setText("diagnosticFallback", "—");
+
+        setText("liveChip", "GPS OFF");
+        setText("liveSpeed", "0 km/h");
+        setText("liveAccuracy", "—");
+        setText("liveOffRoute", "NE");
+        setText("livePosition", "Lokacija nije aktivna");
+
+        setHidden("startLiveNavigation", false);
+        setHidden("stopLiveNavigation", true);
+        $("startLiveNavigation") && ($("startLiveNavigation").disabled = true);
+    }
 
     function init() {
         initializeMap();
-
         initializeDefaults();
-
         bindEvents();
 
-        setTimeout(
-            () => {
-                state.map
-                    ?.invalidateSize();
-
-                syncTomTomBackground();
-
-                fitRoute();
-            },
-            250
-        );
+        window.setTimeout(() => {
+            state.map?.invalidateSize();
+            fitRoute();
+        }, 250);
     }
 
-    if (
-        document.readyState ===
-        "loading"
-    ) {
-        document.addEventListener(
-            "DOMContentLoaded",
-            init,
-            {
-                once: true
-            }
-        );
-    }
-    else {
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", init, { once: true });
+    } else {
         init();
     }
 })();
