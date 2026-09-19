@@ -2337,9 +2337,7 @@ window.ProMap = window.ProMap || {};
 
         $("carMode")?.addEventListener("click", () => setProfile("car"));
 
-        $("truckPreset")?.addEventListener("change", (event) =>
-            applyPreset(event.target.value),
-        );
+        $("truckPreset")?.addEventListener("change", (event) => applyPreset(event.target.value), );
 
         $("useCurrentLocation")?.addEventListener("click", useCurrentLocation);
 
@@ -2357,9 +2355,7 @@ window.ProMap = window.ProMap || {};
 
         $("mapRouteTab")?.addEventListener("click", () => setMapMode("route"));
 
-        $("mapRestrictionsTab")?.addEventListener("click", () =>
-            setMapMode("restrictions"),
-        );
+        $("mapRestrictionsTab")?.addEventListener("click", () => setMapMode("restrictions"),  );
 
         $("mapGpsTab")?.addEventListener("click", () => setMapMode("gps"));
 
