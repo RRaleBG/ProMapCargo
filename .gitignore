@@ -39,4 +39,4 @@ appsettings.Development.json
 
 # OSRM temporary files
 *.tmp
-*.tmp.*ep
+*.tmp.*ep.env

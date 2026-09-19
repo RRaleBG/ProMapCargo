@@ -50,11 +50,18 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: http://+:8080
+
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=promapcargo;Username=promap;Password=promap_dev_change_me
+
       Routing__OsrmBaseUrl: http://osrm:5000
       Routing__OsrmFallbackBaseUrl: https://router.project-osrm.org
+
+      TomTom__ApiKey: ${TOMTOM_API_KEY}
+      TomTom__TrafficStyle: dark
+
     ports:
       - "8080:8080"
+
     depends_on:
       postgres:
         condition: service_healthy

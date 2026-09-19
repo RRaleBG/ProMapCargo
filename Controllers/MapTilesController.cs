@@ -23,13 +23,15 @@ public sealed class MapTilesController(
     [HttpGet("config")]
     public IActionResult Config()
     {
-        var hasKey =
+        var hasTomTomKey =
             !string.IsNullOrWhiteSpace(
                 configuration["TomTom:ApiKey"]);
 
         return Ok(new
         {
-            defaultBase = hasKey ? "dark" : "osm",
+            defaultBase = hasTomTomKey
+                ? "dark"
+                : "osm",
 
             layers = new[]
             {
@@ -38,7 +40,7 @@ public sealed class MapTilesController(
                     id = "dark",
                     label = "TomTom Dark",
                     type = "base",
-                    enabled = hasKey
+                    enabled = hasTomTomKey
                 },
 
                 new
@@ -62,7 +64,7 @@ public sealed class MapTilesController(
                     id = "flow",
                     label = "Traffic Flow",
                     type = "overlay",
-                    enabled = hasKey
+                    enabled = hasTomTomKey
                 },
 
                 new
@@ -70,7 +72,7 @@ public sealed class MapTilesController(
                     id = "incidents",
                     label = "Traffic Incidents",
                     type = "overlay",
-                    enabled = hasKey
+                    enabled = hasTomTomKey
                 }
             }
         });
@@ -91,24 +93,40 @@ public sealed class MapTilesController(
             return NotFound();
         }
 
-        if (zoom < 0 || zoom > 20)
+        /*
+         * Leaflet / TomTom Orbis:
+         *
+         * XYZ tile scheme
+         * Z = zoom
+         * X = column
+         * Y = row
+         *
+         * TomTom Orbis supports zoom levels up to 22.
+         */
+        if (zoom < 0 || zoom > 22)
         {
             return BadRequest("Invalid zoom.");
         }
 
-        var count = 1L << zoom;
+        var tileCount = 1L << zoom;
 
-        if (y < 0 || y >= count)
+        /*
+         * Y must be inside the valid tile range.
+         */
+        if (y < 0 || y >= tileCount)
         {
             return BadRequest(
                 "Invalid tile Y coordinate.");
         }
 
+        /*
+         * X wraps horizontally.
+         */
         x = NormalizeX(
             x,
-            checked((int)count));
+            checked((int)tileCount));
 
-        var key =
+        var apiKey =
             configuration["TomTom:ApiKey"];
 
         var usesTomTom =
@@ -116,18 +134,24 @@ public sealed class MapTilesController(
             || layer == "flow"
             || layer == "incidents";
 
+        /*
+         * TomTom layers require the API key.
+         */
         if (usesTomTom &&
-            string.IsNullOrWhiteSpace(key))
+            string.IsNullOrWhiteSpace(apiKey))
         {
             return StatusCode(
                 StatusCodes.Status503ServiceUnavailable,
                 new
                 {
-                    code =
-                        "map_provider_not_configured"
+                    code = "map_provider_not_configured",
+                    layer
                 });
         }
 
+        /*
+         * Cache is based on the normalized XYZ tile.
+         */
         var cacheKey =
             $"map:{layer}:{zoom}:{x}:{y}";
 
@@ -136,23 +160,29 @@ public sealed class MapTilesController(
                 out MapTile? cached)
             && cached is not null)
         {
+            Response.Headers.CacheControl =
+                $"public,max-age={GetCacheSeconds(layer)}";
+
             return File(
                 cached.Bytes,
                 cached.ContentType);
         }
 
-        var providerY =
-            usesTomTom
-                ? checked((int)(count - 1 - y))
-                : y;
+        /*
+         * IMPORTANT:
+         *
+         * Do NOT invert Y.
+         *
+         * Leaflet already gives us the correct XYZ Y.
+         */
+        var providerY = y;
 
         var url =
             BuildUrl(
                 layer,
                 zoom,
                 x,
-                providerY,
-                key ?? string.Empty);
+                providerY);
 
         if (url is null)
         {
@@ -165,14 +195,45 @@ public sealed class MapTilesController(
                 httpClientFactory
                     .CreateClient("MapTiles");
 
+            using var request =
+                new HttpRequestMessage(
+                    HttpMethod.Get,
+                    url);
+
+            /*
+             * Keep TomTom API key on the server.
+             *
+             * It is never exposed to Leaflet.
+             */
+            if (usesTomTom &&
+                !string.IsNullOrWhiteSpace(apiKey))
+            {
+                request.Headers.TryAddWithoutValidation(
+                    "TomTom-Api-Key",
+                    apiKey);
+            }
+
+            request.Headers.TryAddWithoutValidation(
+                "Accept",
+                "image/png,image/*;q=0.9,*/*;q=0.8");
+
             using var response =
-                await client.GetAsync(
-                    url,
+                await client.SendAsync(
+                    request,
                     HttpCompletionOption.ResponseHeadersRead,
                     ct);
 
             if (!response.IsSuccessStatusCode)
             {
+                logger.LogWarning(
+                    "Map provider request failed: " +
+                    "{Layer} {Zoom}/{X}/{Y}, HTTP {StatusCode}",
+                    layer,
+                    zoom,
+                    x,
+                    y,
+                    (int)response.StatusCode);
+
                 return StatusCode(
                     (int)response.StatusCode);
             }
@@ -182,11 +243,24 @@ public sealed class MapTilesController(
                     .ContentType?
                     .MediaType;
 
+            /*
+             * We expect an image tile.
+             */
             if (string.IsNullOrWhiteSpace(contentType)
                 || !contentType.StartsWith(
                     "image/",
                     StringComparison.OrdinalIgnoreCase))
             {
+                logger.LogWarning(
+                    "Map provider returned invalid " +
+                    "content type {ContentType} for " +
+                    "{Layer} {Zoom}/{X}/{Y}.",
+                    contentType,
+                    layer,
+                    zoom,
+                    x,
+                    y);
+
                 return StatusCode(
                     StatusCodes.Status502BadGateway);
             }
@@ -197,6 +271,14 @@ public sealed class MapTilesController(
 
             if (bytes.Length == 0)
             {
+                logger.LogWarning(
+                    "Map provider returned empty tile " +
+                    "for {Layer} {Zoom}/{X}/{Y}.",
+                    layer,
+                    zoom,
+                    x,
+                    y);
+
                 return StatusCode(
                     StatusCodes.Status502BadGateway);
             }
@@ -207,20 +289,19 @@ public sealed class MapTilesController(
                     contentType);
 
             var cacheSeconds =
-                layer switch
-                {
-                    "flow" => 30,
-                    "incidents" => 15,
-                    "dark" => 3600,
-                    "satellite" => 86400,
-                    _ => 60
-                };
+                GetCacheSeconds(layer);
 
             cache.Set(
                 cacheKey,
                 tile,
                 TimeSpan.FromSeconds(
                     cacheSeconds));
+
+            /*
+             * Browser-side cache.
+             */
+            Response.Headers.CacheControl =
+                $"public,max-age={cacheSeconds}";
 
             return File(
                 bytes,
@@ -235,7 +316,8 @@ public sealed class MapTilesController(
         {
             logger.LogWarning(
                 ex,
-                "Map tile proxy failed for {Layer} {Zoom}/{X}/{Y}.",
+                "Map tile proxy failed for " +
+                "{Layer} {Zoom}/{X}/{Y}.",
                 layer,
                 zoom,
                 x,
@@ -246,36 +328,86 @@ public sealed class MapTilesController(
         }
     }
 
-    private string? BuildUrl(
-        string layer,
-        int z,
-        int x,
-        int y,
-        string key)
-    {
-        var escapedKey =
-            Uri.EscapeDataString(key);
 
-        var style =
+    private string? BuildUrl(
+    string layer,
+    int zoom,
+    int x,
+    int y)
+    {
+        var apiKey = configuration["TomTom:ApiKey"];
+
+        if (string.IsNullOrWhiteSpace(apiKey) && layer != "satellite")
+        {
+            return null;
+        }
+
+        var style =  configuration["TomTom:ApiKey"]
+            ?? "dark";
+
+        style =
+            style.Equals(
+                "light",
+                StringComparison.OrdinalIgnoreCase)
+                ? "light"
+                : "dark";
+
+        var escapedKey =
             Uri.EscapeDataString(
-                configuration["TomTom:TrafficStyle"]
-                ?? "absolute");
+                apiKey ?? string.Empty);
 
         return layer switch
         {
-            "dark" =>
-                $"https://api.tomtom.com/map/1/tile/basic/night/{z}/{x}/{y}.png?key={escapedKey}",
-
             "flow" =>
-                $"https://api.tomtom.com/maps/orbis/traffic/flow/raster/tile/{z}/{x}/{y}?apiVersion=2&style={style}&key={escapedKey}",
+                $"https://api.tomtom.com/maps/orbis/traffic/flow/raster/tile/" +
+                $"{zoom}/{x}/{y}" +
+                $"?apiVersion=2&style={style}&key={escapedKey}",
 
             "incidents" =>
-                $"https://api.tomtom.com/maps/orbis/traffic/incidents/raster/tile/{z}/{x}/{y}?apiVersion=2&style={style}&key={escapedKey}",
+                $"https://api.tomtom.com/maps/orbis/traffic/incidents/raster/tile/" +
+                $"{zoom}/{x}/{y}" +
+                $"?apiVersion=2&style={style}&key={escapedKey}",
+
+            "dark" =>
+                $"https://api.tomtom.com/map/1/tile/basic/night/" +
+                $"{zoom}/{x}/{y}.png?key={escapedKey}",
 
             "satellite" =>
-                $"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+                $"https://server.arcgisonline.com/ArcGIS/rest/services/" +
+                $"World_Imagery/MapServer/tile/{zoom}/{y}/{x}",
 
             _ => null
+        };
+    }
+
+
+
+    private static int GetCacheSeconds(
+        string layer)
+    {
+        return layer switch
+        {
+            /*
+             * Traffic changes frequently.
+             */
+            "flow" => 30,
+
+            /*
+             * Incidents should refresh more frequently.
+             */
+            "incidents" => 15,
+
+            /*
+             * Base map changes much less frequently.
+             */
+            "dark" => 3600,
+
+            /*
+             * Satellite imagery is relatively static.
+             */
+            "satellite" => 86400,
+
+            _ => 60
         };
     }
 
