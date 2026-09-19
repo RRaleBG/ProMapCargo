@@ -8,6 +8,10 @@ using ProMapCargo.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ============================================================
+// ASP.NET CORE
+// ============================================================
+
 builder.Services.AddControllers();
 
 builder.Services.AddMemoryCache();
@@ -20,11 +24,21 @@ builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddSignalR();
 
+
+// ============================================================
+// DATABASE CONNECTION
+// ============================================================
+
 var connectionString =
     builder.Configuration.GetConnectionString("Postgres")
     ?? "Host=localhost;Port=5432;Database=promapcargo;Username=promap;Password=promap_dev_change_me";
 
-builder.Services.AddSingleton(sp =>
+
+// ============================================================
+// NPGSQL DATA SOURCE
+// ============================================================
+
+builder.Services.AddSingleton<NpgsqlDataSource>(_ =>
 {
     var dataSourceBuilder =
         new NpgsqlDataSourceBuilder(
@@ -35,12 +49,24 @@ builder.Services.AddSingleton(sp =>
     return dataSourceBuilder.Build();
 });
 
+
+// ============================================================
+// ENTITY FRAMEWORK CORE
+// ============================================================
+
 builder.Services.AddDbContext<ProMapCargoDbContext>(
     options =>
-        options.UseNpgsql(
-            connectionString,
-            npgsql =>
-                npgsql.UseNetTopologySuite()));
+        options
+            .UseNpgsql(
+                connectionString,
+                npgsql =>
+                    npgsql.UseNetTopologySuite())
+            .UseSnakeCaseNamingConvention());
+
+
+// ============================================================
+// ASP.NET CORE IDENTITY
+// ============================================================
 
 builder.Services
     .AddIdentity<ApplicationUser, ApplicationRole>(
@@ -48,12 +74,25 @@ builder.Services
         {
             options.User.RequireUniqueEmail = false;
 
+            options.Password.RequireDigit = true;
+
+            options.Password.RequireLowercase = true;
+
+            options.Password.RequireUppercase = true;
+
             options.Password.RequireNonAlphanumeric = false;
 
             options.Password.RequiredLength = 8;
+
+            options.SignIn.RequireConfirmedAccount = false;
         })
     .AddEntityFrameworkStores<ProMapCargoDbContext>()
     .AddDefaultTokenProviders();
+
+
+// ============================================================
+// APPLICATION SERVICES
+// ============================================================
 
 builder.Services.AddScoped<
     ICurrentUserContext,
@@ -65,13 +104,46 @@ builder.Services.AddScoped<
 
 builder.Services.AddScoped<BusinessService>();
 
+
+// ============================================================
+// GEOCODING
+// ============================================================
+
 builder.Services.AddHttpClient<
     IGeocodingService,
-    NominatimGeocodingService>();
+    NominatimGeocodingService>(
+    client =>
+    {
+        client.Timeout =
+            TimeSpan.FromSeconds(15);
+
+        client.DefaultRequestHeaders
+            .UserAgent
+            .ParseAdd("ProMapCargo/1.0");
+    });
+
+
+// ============================================================
+// OSRM ROUTING
+// ============================================================
 
 builder.Services.AddHttpClient<
     IRoutingService,
-    OsrmRoutingService>();
+    OsrmRoutingService>(
+    client =>
+    {
+        client.Timeout =
+            TimeSpan.FromSeconds(30);
+
+        client.DefaultRequestHeaders
+            .UserAgent
+            .ParseAdd("ProMapCargo/1.0");
+    });
+
+
+// ============================================================
+// MAP TILES
+// ============================================================
 
 builder.Services.AddHttpClient(
     "MapTiles",
@@ -80,9 +152,16 @@ builder.Services.AddHttpClient(
         client.Timeout =
             TimeSpan.FromSeconds(15);
 
-        client.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "ProMapCargo/1.0");
+        client.DefaultRequestHeaders
+            .UserAgent
+            .ParseAdd(
+                "ProMapCargo/1.0");
     });
+
+
+// ============================================================
+// ROAD RESTRICTIONS
+// ============================================================
 
 builder.Services.AddScoped<
     IPostgresRestrictionRepository,
@@ -92,8 +171,16 @@ builder.Services.AddScoped<
     IRestrictionEngine,
     PostgresRestrictionEngine>();
 
+
+// ============================================================
+// POSTGIS ROUTING
+// ============================================================
+
 builder.Services.AddScoped<
     PostGisRoutingRepository>();
+
+builder.Services.AddScoped<
+    TurnRestrictionMatcher>();
 
 builder.Services.AddScoped<
     ManeuverBuilder>();
@@ -111,6 +198,11 @@ builder.Services.AddScoped<
     IPostGisRoutingService,
     PostGisRoutingService>();
 
+
+// ============================================================
+// CORS
+// ============================================================
+
 builder.Services.AddCors(
     options =>
     {
@@ -120,26 +212,54 @@ builder.Services.AddCors(
             {
                 var origins =
                     builder.Configuration
-                        .GetSection("Cors:Origins")
+                        .GetSection(
+                            "Cors:Origins")
                         .Get<string[]>();
 
+                if (origins is not null &&
+                    origins.Length > 0)
+                {
+                    policy
+                        .WithOrigins(origins)
+                        .AllowAnyHeader()
+                        .AllowAnyMethod()
+                        .AllowCredentials();
+
+                    return;
+                }
+
                 policy
-                    .WithOrigins(
-                        origins
-                        ?? new[]
-                        {
-                            "https://localhost:5001",
-                            "http://localhost:5000"
-                        })
+                    .AllowAnyOrigin()
                     .AllowAnyHeader()
-                    .AllowAnyMethod()
-                    .AllowCredentials();
+                    .AllowAnyMethod();
             });
     });
 
+
+// ============================================================
+// BUILD APPLICATION
+// ============================================================
+
 var app = builder.Build();
 
-app.UseExceptionHandler();
+
+// ============================================================
+// ERROR HANDLING
+// ============================================================
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseDeveloperExceptionPage();
+}
+else
+{
+    app.UseExceptionHandler();
+}
+
+
+// ============================================================
+// HTTP PIPELINE
+// ============================================================
 
 app.UseStaticFiles();
 
@@ -151,19 +271,54 @@ app.UseAuthentication();
 
 app.UseAuthorization();
 
+
+// ============================================================
+// API CONTROLLERS
+// ============================================================
+
 app.MapControllers();
+
+
+// ============================================================
+// SIGNALR
+// ============================================================
 
 app.MapHub<NavigationHub>(
     "/hubs/navigation");
 
+
+// ============================================================
+// RAZOR PAGES
+// ============================================================
+
 app.MapRazorPages();
+
+
+// ============================================================
+// FALLBACK
+// ============================================================
 
 app.MapFallbackToPage(
     "/Index");
 
+
+// ============================================================
+// DATABASE BOOTSTRAP
+// ============================================================
+
 await BootstrapAsync(app);
 
-app.Run();
+
+// ============================================================
+// RUN
+// ============================================================
+
+await app.RunAsync();
+
+
+// ============================================================
+// DATABASE BOOTSTRAP
+// ============================================================
 
 static async Task BootstrapAsync(
     WebApplication app)
@@ -171,52 +326,68 @@ static async Task BootstrapAsync(
     using var scope =
         app.Services.CreateScope();
 
+    var services =
+        scope.ServiceProvider;
+
     var db =
-        scope.ServiceProvider
-            .GetRequiredService<
-                ProMapCargoDbContext>();
+        services.GetRequiredService<
+            ProMapCargoDbContext>();
 
     try
     {
+        // ====================================================
+        // DATABASE CONNECTION
+        // ====================================================
+
+        var canConnect =
+            await db.Database
+                .CanConnectAsync();
+
+        if (!canConnect)
+        {
+            app.Logger.LogWarning(
+                "PostgreSQL database is not available. " +
+                "Database bootstrap will be skipped.");
+
+            return;
+        }
+
+
+        // ====================================================
+        // EF CORE DATABASE
+        // ====================================================
+
         await db.Database
             .EnsureCreatedAsync();
 
-        var routingSqlPath =
-            Path.Combine(
-                app.Environment.ContentRootPath,
-                "Sql",
-                "03-routing-graph.sql");
 
-        if (File.Exists(routingSqlPath))
-        {
-            var sql =
-                await File.ReadAllTextAsync(
-                    routingSqlPath);
+        // ====================================================
+        // ROUTING GRAPH SQL
+        // ====================================================
 
-            await db.Database
-                .ExecuteSqlRawAsync(sql);
-        }
+        await ExecuteSqlFileAsync(
+            app,
+            db,
+            "03-routing-graph.sql");
 
-        var indexesSqlPath =
-            Path.Combine(
-                app.Environment.ContentRootPath,
-                "Sql",
-                "04-operational-indexes.sql");
 
-        if (File.Exists(indexesSqlPath))
-        {
-            var sql =
-                await File.ReadAllTextAsync(
-                    indexesSqlPath);
+        // ====================================================
+        // OPERATIONAL INDEXES
+        // ====================================================
 
-            await db.Database
-                .ExecuteSqlRawAsync(sql);
-        }
+        await ExecuteSqlFileAsync(
+            app,
+            db,
+            "04-operational-indexes.sql");
+
+
+        // ====================================================
+        // ROLES
+        // ====================================================
 
         var roleManager =
-            scope.ServiceProvider
-                .GetRequiredService<
-                    RoleManager<ApplicationRole>>();
+            services.GetRequiredService<
+                RoleManager<ApplicationRole>>();
 
         var roles =
             new[]
@@ -231,21 +402,105 @@ static async Task BootstrapAsync(
 
         foreach (var roleName in roles)
         {
-            if (!await roleManager
-                    .RoleExistsAsync(roleName))
+            if (await roleManager
+                    .RoleExistsAsync(
+                        roleName))
             {
+                continue;
+            }
+
+            var result =
                 await roleManager.CreateAsync(
                     new ApplicationRole
                     {
                         Name = roleName
                     });
+
+            if (!result.Succeeded)
+            {
+                var errors =
+                    string.Join(
+                        ", ",
+                        result.Errors.Select(
+                            error =>
+                                $"{error.Code}: {error.Description}"));
+
+                app.Logger.LogWarning(
+                    "Failed creating role {RoleName}: {Errors}",
+                    roleName,
+                    errors);
             }
         }
+
+
+        // ====================================================
+        // BOOTSTRAP COMPLETE
+        // ====================================================
+
+        app.Logger.LogInformation(
+            "ProMap Cargo database bootstrap completed.");
     }
     catch (Exception ex)
     {
         app.Logger.LogWarning(
             ex,
-            "Database bootstrap failed. API can still start; run SQL/migrations before routing.");
+            "Database bootstrap failed. " +
+            "API can still start; run SQL/migrations before routing.");
+    }
+}
+
+
+// ============================================================
+// SQL FILE EXECUTION
+// ============================================================
+
+static async Task ExecuteSqlFileAsync(
+    WebApplication app,
+    ProMapCargoDbContext db,
+    string fileName)
+{
+    var sqlPath =
+        Path.Combine(
+            app.Environment.ContentRootPath,
+            "Sql",
+            fileName);
+
+    if (!File.Exists(sqlPath))
+    {
+        app.Logger.LogWarning(
+            "SQL bootstrap file not found: {SqlFile}",
+            sqlPath);
+
+        return;
+    }
+
+    try
+    {
+        var sql =
+            await File.ReadAllTextAsync(
+                sqlPath);
+
+        if (string.IsNullOrWhiteSpace(sql))
+        {
+            app.Logger.LogWarning(
+                "SQL bootstrap file is empty: {SqlFile}",
+                sqlPath);
+
+            return;
+        }
+
+        await db.Database
+            .ExecuteSqlRawAsync(sql);
+
+        app.Logger.LogInformation(
+            "Executed SQL bootstrap file: {SqlFile}",
+            fileName);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(
+            ex,
+            "Failed executing SQL bootstrap file: {SqlFile}",
+            sqlPath);
     }
 }
